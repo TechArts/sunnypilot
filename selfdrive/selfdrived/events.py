@@ -335,7 +335,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "Steering Assist Temporarily Unavailable",
       "",
       AlertStatus.userPrompt, AlertSize.small,
-      Priority.LOW, VisualAlert.steerRequired, AudibleAlert.prompt, 1.8),
+      Priority.LOW, VisualAlert.none, AudibleAlert.none, 1.8),
   },
 
   EventName.driverDistracted1: {
@@ -529,7 +529,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   EventName.pedalPressed: {
-    ET.USER_DISABLE: EngagementAlert(AudibleAlert.disengage),
+    ET.USER_DISABLE: EngagementAlert(AudibleAlert.none),  # braking is the driver's choice: it still disengages, without the chime
     ET.NO_ENTRY: NoEntryAlert("Pedal Pressed",
                               visual_alert=VisualAlert.brakePressed),
   },

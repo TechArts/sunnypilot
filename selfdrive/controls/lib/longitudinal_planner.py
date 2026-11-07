@@ -23,6 +23,11 @@ CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
 
+# after a gas override above the set speed: no braking for the hold, then a gentle decel limit (only without a lead)
+GAS_RESUME_HOLD = 0.5  # s
+GAS_RESUME_DECEL_TIME = 2.0  # s
+GAS_RESUME_MAX_DECEL = -0.5  # m/s^2
+
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
 _A_TOTAL_MAX_BP = [20., 40.]
@@ -55,6 +60,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.fcw = False
     self.dt = dt
     self.allow_throttle = True
+    self.since_gas = 1e3  # s
 
     self.a_desired = init_a
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
@@ -173,6 +179,11 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       accel_clip[idx] = np.clip(accel_clip[idx], self.prev_accel_clip[idx] - 0.05, self.prev_accel_clip[idx] + 0.05)
     self.output_a_target = np.clip(output_a_target, accel_clip[0], accel_clip[1])
     self.prev_accel_clip = accel_clip
+
+    self.since_gas = 0.0 if sm['carState'].gasPressed else self.since_gas + self.dt
+    if v_ego > v_cruise and self.since_gas < GAS_RESUME_HOLD + GAS_RESUME_DECEL_TIME and not (
+       sm['radarState'].leadOne.status or force_slow_decel or self.output_should_stop):
+      self.output_a_target = max(self.output_a_target, 0.0 if self.since_gas < GAS_RESUME_HOLD else GAS_RESUME_MAX_DECEL)
 
   def publish(self, sm, pm):
     plan_send = messaging.new_message('longitudinalPlan')
