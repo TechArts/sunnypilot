@@ -394,7 +394,7 @@
   },
   "HyundaiSteerFeel": {
     "title": "Hyundai Steer Feel (GV70, experimental)",
-    "description": "How much openpilot's steering yields when you push the wheel, above 6 m/s on the 2026 GV70. Generic is the default; Stock follows the stock camera's lane following.",
+    "description": "How much openpilot's steering yields when you push the wheel on the 2026 GV70. Generic is the default; Halfway and Stock apply above 6 m/s; Stock (all speeds) also applies when slow.",
     "options": [
       {
         "value": 0,
@@ -407,6 +407,10 @@
       {
         "value": 2,
         "label": "Stock"
+      },
+      {
+        "value": 3,
+        "label": "Stock (all speeds)"
       }
     ]
   },
