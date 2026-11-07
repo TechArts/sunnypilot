@@ -1118,6 +1118,10 @@
     "title": "[TIZI/TICI only] Display Road Name",
     "description": "Displays the name of the road the car is traveling on. <br>The OpenStreetMap database of the location must be downloaded to fetch the road name."
   },
+  "RedLightAlert": {
+    "title": "Red Traffic Light Alert (Beta)",
+    "description": "A chime and on-screen alert (and a cluster alert plus steering wheel vibration on supported cars) will play when the driving model plans a stop ahead while you are driving at speed and not slowing down. <br>Note: This alert is only designed as a notification. It is the driver's responsibility to observe their environment and make decisions accordingly."
+  },
   "RocketFuel": {
     "title": "[TIZI/TICI only] Real-time Acceleration Bar",
     "description": "Show an indicator on the left side of the screen to display real-time vehicle acceleration and deceleration. This displays what the car is currently doing, not what the planner is requesting."

@@ -31,7 +31,7 @@ class ControlsExt(ModelStateBase):
     self.CP_SP = messaging.log_from_bytes(params.get("CarParamsSP", block=True), custom.CarParamsSP)
     cloudlog.info("controlsd_ext got CarParamsSP")
 
-    self.sm_services_ext = ['radarState', 'selfdriveStateSP']
+    self.sm_services_ext = ['radarState', 'selfdriveStateSP', 'longitudinalPlanSP']
     self.pm_services_ext = ['carControlSP']
 
   def initialize_lateral_control(self, lac, CI, dt):
@@ -98,7 +98,22 @@ class ControlsExt(ModelStateBase):
 
     CC_SP.intelligentCruiseButtonManagement = sm['selfdriveStateSP'].intelligentCruiseButtonManagement
 
+    CC_SP.clusterAlert = self.get_cluster_alert(sm)
+
     return CC_SP
+
+  @staticmethod
+  def get_cluster_alert(sm: messaging.SubMaster) -> custom.CarControlSP.ClusterAlert:
+    # one-shot: the planner raises each alert for a single longitudinalPlanSP message, the car controller latches it
+    if not sm.updated['longitudinalPlanSP']:
+      return custom.CarControlSP.ClusterAlert.none
+
+    e2e_alerts = sm['longitudinalPlanSP'].e2eAlerts
+    if e2e_alerts.redLightAlert:
+      return custom.CarControlSP.ClusterAlert.red
+    if e2e_alerts.greenLightAlert or e2e_alerts.leadDepartAlert:
+      return custom.CarControlSP.ClusterAlert.green
+    return custom.CarControlSP.ClusterAlert.none
 
   @staticmethod
   def publish_ext(CC_SP: custom.CarControlSP, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
