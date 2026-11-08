@@ -353,10 +353,6 @@ struct CarParamsSP @0x80ae746ee2596b11 {
   pcmCruiseSpeed @3 :Bool;
   intelligentCruiseButtonManagementAvailable @4 :Bool;
   enableGasInterceptor @5 :Bool;
-  hyundaiTakeoverTorque @6 :UInt16;  # GV70 steering takeover filter, 0 = off
-  hyundaiTakeoverReleaseTorque @7 :UInt16;
-  hyundaiTakeoverHoldMs @8 :UInt16;
-  hyundaiResumeAngleRateX10 @9 :UInt16;  # deg per frame x 10
 
   neuralNetworkLateralControl @2 :NeuralNetworkLateralControl;
 
