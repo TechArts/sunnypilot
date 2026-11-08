@@ -251,4 +251,13 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       AlertStatus.userPrompt, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
+  # the car's own adaptive cruise is engaged while openpilot longitudinal is not; shown for as long as that holds (the
+  # refuse chime of the declined engage already sounded)
+  EventNameSP.stockAccActive: {
+    ET.PERMANENT: Alert(
+      "Car's Adaptive Cruise in control",
+      "",
+      AlertStatus.userPrompt, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.none, .2),
+  },
 }

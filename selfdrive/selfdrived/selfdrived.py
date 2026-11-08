@@ -89,7 +89,7 @@ class SelfdriveD(CruiseHelper):
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
 
-    ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan'] + ['modelDataV2SP']
+    ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan'] + ['modelDataV2SP', 'carStateSP']
     if SIMULATION:
       ignore += ['driverCameraState', 'managerState']
     if REPLAY:
@@ -99,7 +99,7 @@ class SelfdriveD(CruiseHelper):
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'livePose', 'liveDelay',
                                    'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters',
                                    'controlsState', 'carControl', 'driverAssistance', 'alertDebug', 'userBookmark', 'audioFeedback',
-                                   'lateralManeuverPlan', 'modelDataV2SP', 'longitudinalPlanSP'] + \
+                                   'lateralManeuverPlan', 'modelDataV2SP', 'longitudinalPlanSP', 'carStateSP'] + \
                                    self.camera_packets + self.sensor_packets + self.gps_packets,
                                   ignore_alive=ignore, ignore_avg_freq=ignore,
                                   ignore_valid=ignore, frequency=int(1/DT_CTRL))
@@ -126,6 +126,7 @@ class SelfdriveD(CruiseHelper):
     self.active = False
     self.mismatch_counter = 0
     self.cruise_mismatch_counter = 0
+    self.stock_acc_counter = 0
     self.last_steering_pressed_frame = 0
     self.distance_traveled = 0
     self.last_functional_fan_frame = 0
@@ -406,6 +407,13 @@ class SelfdriveD(CruiseHelper):
       self.cruise_mismatch_counter = self.cruise_mismatch_counter + 1 if cruise_mismatch else 0
       if self.cruise_mismatch_counter > int(6. / DT_CTRL):
         self.events.add(EventName.cruiseMismatch)
+
+    # the car's own ACC drives (engaged on the camera) while openpilot is not engaged: say so, after 1 s so that the engage
+    # of openpilot from the same press does not flash it
+    stock_acc = self.sm['carStateSP'].stockAccEngaged and not self.enabled
+    self.stock_acc_counter = self.stock_acc_counter + 1 if stock_acc else 0
+    if self.stock_acc_counter > int(1. / DT_CTRL):
+      self.events_sp.add(custom.OnroadEventSP.EventName.stockAccActive)
 
     # Send a "steering required alert" if saturation count has reached the limit
     if CS.steeringPressed:

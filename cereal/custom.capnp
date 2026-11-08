@@ -344,6 +344,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     speedLimitPending @22;
     e2eChime @23;
     redLightAlert @24;
+    stockAccActive @25;
   }
 }
 
@@ -353,6 +354,10 @@ struct CarParamsSP @0x80ae746ee2596b11 {
   pcmCruiseSpeed @3 :Bool;
   intelligentCruiseButtonManagementAvailable @4 :Bool;
   enableGasInterceptor @5 :Bool;
+  hyundaiTakeoverTorque @6 :UInt16;  # GV70 steering takeover filter, 0 = off
+  hyundaiTakeoverReleaseTorque @7 :UInt16;
+  hyundaiTakeoverHoldMs @8 :UInt16;
+  hyundaiResumeAngleRateX10 @9 :UInt16;  # deg per frame x 10
 
   neuralNetworkLateralControl @2 :NeuralNetworkLateralControl;
 
@@ -444,6 +449,7 @@ struct BackupManagerSP @0xf98d843bfd7004a3 {
 
 struct CarStateSP @0xb86e6369214c01c8 {
   speedLimit @0 :Float32;
+  stockAccEngaged @1 :Bool;  # the car's own ACC is engaged (camera ACCMode)
 }
 
 struct LiveMapDataSP @0xf416ec09499d9d19 {
