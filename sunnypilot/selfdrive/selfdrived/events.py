@@ -26,6 +26,21 @@ EVENT_NAME_SP = {v: k for k, v in EventNameSP.schema.enumerants.items()}
 IS_MICI = HARDWARE.get_device_type() == 'mici'
 
 
+def stock_acc_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  locked = not any(ps.controlsAllowed for ps in sm['pandaStates'])
+  if locked:
+    return Alert(
+      "Cruise blocked",
+      "Car's cruise started on its own: press brake or Main",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.MID, VisualAlert.none, AudibleAlert.warningSoft, 3.)
+  return Alert(
+    "Car's Adaptive Cruise in control",
+    "",
+    AlertStatus.userPrompt, AlertSize.small,
+    Priority.MID, VisualAlert.none, AudibleAlert.warningSoft, 3.)
+
+
 def speed_limit_adjust_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   speedLimit = sm['longitudinalPlanSP'].speedLimit.resolver.speedLimit
   speed = round(speedLimit * (CV.MS_TO_KPH if metric else CV.MS_TO_MPH))
@@ -250,5 +265,11 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "",
       AlertStatus.userPrompt, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+  # the car's own adaptive cruise is engaged on the camera while openpilot longitudinal is not, without a driver engage for openpilot.
+  # With controls not allowed the panda has locked the camera's output out of the car (nothing accelerates or brakes, the car coasts):
+  # shown for as long as that holds; with controls allowed (openpilot declined an engage) the camera really drives.
+  EventNameSP.stockAccActive: {
+    ET.PERMANENT: stock_acc_alert,
   },
 }
