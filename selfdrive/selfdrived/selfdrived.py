@@ -50,6 +50,9 @@ TurnDirection = custom.ModelDataV2SP.TurnDirection
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 
 
+HYUNDAI_TAKEOVER_RELEASE_TORQUE = 100  # default HyundaiTakeoverReleaseTorque: below this the opendbc takeover filter resumes steering
+
+
 class SelfdriveD(CruiseHelper):
   def __init__(self, CP=None, CP_SP=None):
     self.params = Params()
@@ -128,6 +131,7 @@ class SelfdriveD(CruiseHelper):
     self.cruise_mismatch_counter = 0
     self.stock_acc_counter = 0
     self.last_steering_pressed_frame = 0
+    self.last_takeover_frame = 0
     self.distance_traveled = 0
     self.last_functional_fan_frame = 0
     self.events_prev = []
@@ -408,17 +412,21 @@ class SelfdriveD(CruiseHelper):
       if self.cruise_mismatch_counter > int(6. / DT_CTRL):
         self.events.add(EventName.cruiseMismatch)
 
-    # the car's own ACC drives (engaged on the camera) while openpilot is not engaged: say so, after 1 s so that the engage
-    # of openpilot from the same press does not flash it
+    # the car's own ACC is engaged on the camera while openpilot is not: say so at once and audibly. 0.2 s only: the engage of openpilot
+    # from the same press enables within 0.05 s and must not chime
     stock_acc = self.sm['carStateSP'].stockAccEngaged and not self.enabled
     self.stock_acc_counter = self.stock_acc_counter + 1 if stock_acc else 0
-    if self.stock_acc_counter > int(1. / DT_CTRL):
+    if self.stock_acc_counter > int(0.2 / DT_CTRL):
       self.events_sp.add(custom.OnroadEventSP.EventName.stockAccActive)
 
     # Send a "steering required alert" if saturation count has reached the limit
     if CS.steeringPressed:
       self.last_steering_pressed_frame = self.sm.frame
-    recent_steer_pressed = (self.sm.frame - self.last_steering_pressed_frame)*DT_CTRL < 2.0
+    # same rule as F19 (car_specific): a Hyundai pull at the takeover filter's release torque, or a wheel press, is a takeover; the filter pauses steering
+    # then and resumes it blended, and the model keeps its angle meanwhile, so 'turn exceeds limit' within 2 s of it is the driver's own input
+    if CS.steeringPressed or (self.CP.brand == 'hyundai' and abs(CS.steeringTorque) >= HYUNDAI_TAKEOVER_RELEASE_TORQUE):
+      self.last_takeover_frame = self.sm.frame
+    recent_steer_pressed = (self.sm.frame - max(self.last_steering_pressed_frame, self.last_takeover_frame))*DT_CTRL < 2.0
     controlstate = self.sm['controlsState']
     lac = getattr(controlstate.lateralControlState, controlstate.lateralControlState.which())
     if lac.active and not recent_steer_pressed and not self.CP.notCar:
