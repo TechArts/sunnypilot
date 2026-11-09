@@ -8,7 +8,7 @@ See the LICENSE.md file in the root directory for more details.
 from cereal import log, custom
 
 from opendbc.car import structs
-from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags
 from openpilot.common.params import Params
 from openpilot.sunnypilot.mads.helpers import MadsSteeringModeOnBrake, read_steering_mode_param, MADS_NO_ACC_MAIN_BUTTON
 from openpilot.sunnypilot.mads.state import StateMachine, GEARS_ALLOW_PAUSED_SILENT
@@ -50,6 +50,10 @@ class ModularAssistiveDrivingSystem:
 
     if self.CP.brand in MADS_NO_ACC_MAIN_BUTTON:
       self.no_main_cruise = True
+
+    # main button is only the cruise engage/disengage button (panda: mads_main_off_keeps_lateral): main off ends cruise, never steering
+    self.main_off_keeps_lateral = bool(self.CP.brand == "hyundai" and self.CP.safetyConfigs and
+                                       self.CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG_MAIN_BUTTON_ENGAGE)
 
     # read params on init
     self.enabled_toggle = self.params.get_bool("Mads")
@@ -181,7 +185,7 @@ class ModularAssistiveDrivingSystem:
 
     if not CS.cruiseState.available and not self.no_main_cruise:
       self.events.remove(EventName.buttonEnable)
-      if self.selfdrive.CS_prev.cruiseState.available:
+      if self.selfdrive.CS_prev.cruiseState.available and not self.main_off_keeps_lateral:
         self.events_sp.add(EventNameSP.lkasDisable)
 
     if self.steering_mode_on_brake == MadsSteeringModeOnBrake.DISENGAGE:
