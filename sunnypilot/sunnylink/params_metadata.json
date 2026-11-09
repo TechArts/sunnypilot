@@ -414,6 +414,22 @@
       }
     ]
   },
+  "HyundaiTakeoverHold": {
+    "title": "Hyundai Takeover Hold (GV70, ms)",
+    "description": "How long the wheel must stay below the release torque before steering resumes after you took over. Default 500."
+  },
+  "HyundaiTakeoverReleaseTorque": {
+    "title": "Hyundai Takeover Release Torque (GV70)",
+    "description": "Steering resumes once your torque on the wheel stays below this value for the hold time. Default 100."
+  },
+  "HyundaiTakeoverTorque": {
+    "title": "Hyundai Takeover Torque (GV70)",
+    "description": "Steering pauses (no resistance, grey icon) when you pull the wheel with at least this torque. 0 turns the takeover pause off. Default 150."
+  },
+  "HyundaiResumeAngleRate": {
+    "title": "Hyundai Resume Angle Rate (GV70, deg per frame x 10)",
+    "description": "Maximum steering angle step per frame while steering resumes after a takeover, in tenths of a degree. Default 10 (1.0 deg per frame)."
+  },
   "InstallDate": {
     "title": "Install Date",
     "description": ""
