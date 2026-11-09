@@ -9,10 +9,14 @@ FEEDBACK_MAX_DURATION = 10.0
 ButtonType = car.CarState.ButtonEvent.Type
 
 
+def e2e_alert_fired(e2e_alerts) -> bool:
+  return e2e_alerts.redLightAlert or e2e_alerts.greenLightAlert or e2e_alerts.leadDepartAlert
+
+
 def main():
   params = Params()
   pm = messaging.PubMaster(['userBookmark', 'audioFeedback'])
-  sm = messaging.SubMaster(['rawAudioData', 'bookmarkButton', 'carState', 'selfdriveStateSP'])
+  sm = messaging.SubMaster(['rawAudioData', 'bookmarkButton', 'carState', 'selfdriveStateSP', 'longitudinalPlanSP'])
   should_record_audio = False
   block_num = 0
   waiting_for_release = False
@@ -61,6 +65,11 @@ def main():
 
     if sm.updated['bookmarkButton']:
       cloudlog.info("Bookmark button pressed!")
+      should_send_bookmark = True
+
+    # mark the moment a red/green-light alert fires so the clip can be labelled later
+    if sm.updated['longitudinalPlanSP'] and e2e_alert_fired(sm['longitudinalPlanSP'].e2eAlerts):
+      cloudlog.info("E2E alert fired - bookmarking")
       should_send_bookmark = True
 
     if should_send_bookmark:
