@@ -11,6 +11,9 @@ GearShifter = structs.CarState.GearShifter
 EventName = log.OnroadEvent.EventName
 NetworkLocation = structs.CarParams.NetworkLocation
 
+HYUNDAI_TAKEOVER_TORQUE = 150  # default HyundaiTakeoverTorque
+TAKEOVER_ALERT_WINDOW = 2.0  # s
+
 
 class CarSpecificEvents:
   def __init__(self, CP: structs.CarParams):
@@ -157,15 +160,17 @@ class CarSpecificEvents:
         events.add(EventName.buttonCancel)
 
     # Handle permanent and temporary steering faults
-    self.steering_unpressed = 0 if CS.steeringPressed else self.steering_unpressed + 1
+    # a takeover is the wheel pressed or, on Hyundai, a pull at the opendbc takeover filter's default threshold (the car pauses steering then)
+    takeover = CS.steeringPressed or (self.CP.brand == 'hyundai' and abs(CS.steeringTorque) >= HYUNDAI_TAKEOVER_TORQUE)
+    self.steering_unpressed = 0 if takeover else self.steering_unpressed + 1
     if CS.steerFaultTemporary:
       if CS.steeringPressed and (not CS_prev.steerFaultTemporary or self.no_steer_warning):
         self.no_steer_warning = True
       else:
         self.no_steer_warning = False
 
-        # if the user overrode recently, show a less harsh alert
-        if self.silent_steer_warning or CS.standstill or self.steering_unpressed < int(1.5 / DT_CTRL):
+        # a fault that starts during or just after a takeover, or when stopped, is the driver's doing: visual text only
+        if self.silent_steer_warning or CS.standstill or self.steering_unpressed < int(TAKEOVER_ALERT_WINDOW / DT_CTRL):
           self.silent_steer_warning = True
           events.add(EventName.steerTempUnavailableSilent)
         else:
