@@ -116,6 +116,7 @@ def initialize_params(params) -> list[dict[str, Any]]:
   keys.extend([
     "HyundaiLongitudinalTuning",
     "HyundaiSteerFeel",
+    "HyundaiCurveHold",
     "HyundaiTakeoverTorque",
     "HyundaiTakeoverReleaseTorque",
     "HyundaiTakeoverHold",
