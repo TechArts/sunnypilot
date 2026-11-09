@@ -392,6 +392,20 @@
       }
     ]
   },
+  "HyundaiCurveHold": {
+    "title": "Hyundai Curve Hold (GV70, experimental)",
+    "description": "In a curve, pushing the wheel along the turn no longer pauses steering, only pulling against it does, and the steering gain keeps a floor so openpilot holds the curve. Needs Steer Feel on Stock. Off keeps the current behavior. Change only while parked.",
+    "options": [
+      {
+        "value": 0,
+        "label": "Off"
+      },
+      {
+        "value": 1,
+        "label": "On"
+      }
+    ]
+  },
   "HyundaiSteerFeel": {
     "title": "Hyundai Steer Feel (GV70, experimental)",
     "description": "How much openpilot's steering yields when you push the wheel on the 2026 GV70. Generic is the default; Halfway and Stock apply above 6 m/s; Stock (all speeds) also applies when slow.",
