@@ -8,6 +8,7 @@ See the LICENSE.md file in the root directory for more details.
 from cereal import car, custom
 from opendbc.car import structs
 from openpilot.common.params import Params
+from openpilot.sunnypilot.selfdrive.car.main_button_engage import main_button_engage
 
 ButtonType = car.CarState.ButtonEvent.Type
 EventNameSP = custom.OnroadEventSP.EventName
@@ -23,9 +24,11 @@ class CruiseHelper:
     self.button_frame_counts = {ButtonType.gapAdjustCruise: 0}
     self._experimental_mode = False
     self.experimental_mode_switched = False
+    # Genesis (main-button engage): holding the distance button is the car's own Driving Style key, not an Experimental Mode switch
+    self.distance_hold_toggles_experimental = not main_button_engage(CP)
 
   def update(self, CS, events, experimental_mode) -> None:
-    if self.CP.openpilotLongitudinalControl:
+    if self.CP.openpilotLongitudinalControl and self.distance_hold_toggles_experimental:
       if CS.cruiseState.available:
         self.update_button_frame_counts(CS)
 
