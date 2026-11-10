@@ -20,8 +20,6 @@ IMPERIAL_INCREMENT = round(CV.MPH_TO_KPH, 1)  # round here to avoid rounding err
 ButtonEvent = car.CarState.ButtonEvent
 ButtonType = car.CarState.ButtonEvent.Type
 CRUISE_LONG_PRESS = 50
-# a main-button engage is turned into an enable by selfdrived/controlsd a few frames later; remember the press for this long (1 s at 100 Hz)
-MAIN_ENGAGE_WINDOW = 100
 MAIN_ENGAGE_MIN_SET_SPEED = 30  # kph, or 20 mph, like the stock cruise
 CRUISE_NEAREST_FUNC = {
   ButtonType.accelCruise: math.ceil,
@@ -41,7 +39,6 @@ class VCruiseHelper(VCruiseHelperSP):
     self.v_cruise_cluster_kph = V_CRUISE_UNSET
     self.v_cruise_kph_last = 0
     self.main_button_engage = main_button_engage(CP)
-    self.main_engage_timer = 0
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
 
@@ -51,12 +48,6 @@ class VCruiseHelper(VCruiseHelperSP):
 
   def update_v_cruise(self, CS, enabled, is_metric):
     self.v_cruise_kph_last = self.v_cruise_kph
-
-    # only a press that turned the main cruise state on (cruiseState.available) is an engage request
-    if CS.cruiseState.available and any(b.type == ButtonType.mainCruise and b.pressed for b in CS.buttonEvents):
-      self.main_engage_timer = MAIN_ENGAGE_WINDOW
-    elif self.main_engage_timer > 0:
-      self.main_engage_timer -= 1
 
     self.get_minimum_set_speed(is_metric)
 
@@ -155,11 +146,14 @@ class VCruiseHelper(VCruiseHelperSP):
     if self.CP.pcmCruise:
       return
 
-    if self.main_button_engage and self.main_engage_timer > 0:
-      # engaged with the main button: set speed is the current speed, at least 30 kph / 20 mph (like SET, but without the 40 kph floor)
-      self.main_engage_timer = 0
-      min_speed = MAIN_ENGAGE_MIN_SET_SPEED if is_metric else 20 * CV.MPH_TO_KPH
-      self.v_cruise_kph = int(round(np.clip(CS.vEgo * CV.MS_TO_KPH, min_speed, V_CRUISE_MAX)))
+    if self.main_button_engage:
+      # Genesis buttons, like the stock cruise: the pause key (resumeCruise, see PauseResumeKey) resumes the last set speed; MAIN, SET and up
+      # set the current speed, at least 30 kph / 20 mph
+      if any(b.type == ButtonType.resumeCruise for b in CS.buttonEvents) and self.v_cruise_initialized:
+        self.v_cruise_kph = self.v_cruise_kph_last
+      else:
+        min_speed = MAIN_ENGAGE_MIN_SET_SPEED if is_metric else 20 * CV.MPH_TO_KPH
+        self.v_cruise_kph = int(round(np.clip(CS.vEgo * CV.MS_TO_KPH, min_speed, V_CRUISE_MAX)))
       self.v_cruise_cluster_kph = self.v_cruise_kph
       return
 

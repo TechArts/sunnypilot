@@ -1,5 +1,5 @@
 """
-Cruise main button engage (Hyundai CCNC LFA_ALT openpilot longitudinal): set speed on engage.
+Cruise main button engage (Hyundai CCNC LFA_ALT openpilot longitudinal, Genesis buttons): set speed on engage, like the stock cruise.
 Runs on the device / with the opendbc submodule at a revision that has HyundaiSafetyFlags.LONG_MAIN_BUTTON_ENGAGE.
 """
 import pytest
@@ -7,12 +7,13 @@ import pytest
 from cereal import car, custom
 from opendbc.car.hyundai.values import HyundaiSafetyFlags
 from openpilot.common.constants import CV
-from openpilot.selfdrive.car.cruise import VCruiseHelper, V_CRUISE_INITIAL, V_CRUISE_MAX, MAIN_ENGAGE_WINDOW
+from openpilot.selfdrive.car.cruise import VCruiseHelper, V_CRUISE_INITIAL, V_CRUISE_MAX
 
 ButtonEvent = car.CarState.ButtonEvent
 ButtonType = car.CarState.ButtonEvent.Type
 
 SAFETY_PARAM = 7180 | HyundaiSafetyFlags.LONG_MAIN_BUTTON_ENGAGE
+MIN_MPH_KPH = int(round(20 * CV.MPH_TO_KPH))
 
 
 def make_helper(brand="hyundai", safety_param=SAFETY_PARAM):
@@ -25,71 +26,65 @@ def cs(v_ego_kph=0., events=(), available=True):
                       buttonEvents=[ButtonEvent(type=t, pressed=p) for t, p in events])
 
 
-def press_main(helper, v_ego_kph, is_metric=True):
-  """main press turns main on -> carState with the rising edge -> a few frames later carControl.enabled -> initialize"""
-  helper.update_v_cruise(cs(v_ego_kph, [(ButtonType.mainCruise, True)]), enabled=False, is_metric=is_metric)
-  for _ in range(5):
-    helper.update_v_cruise(cs(v_ego_kph), enabled=False, is_metric=is_metric)
-  helper.initialize_v_cruise(cs(v_ego_kph), False, False, is_metric)
+def engage(helper, v_ego_kph, button, is_metric=True):
+  """the carState of the frame selfdrived enables on goes to initialize_v_cruise"""
+  helper.initialize_v_cruise(cs(v_ego_kph, [(button, False)]), False, False, is_metric)
+
+
+ENGAGE_BUTTONS = (ButtonType.mainCruise, ButtonType.setCruise, ButtonType.decelCruise, ButtonType.accelCruise)
 
 
 class TestMainButtonEngage:
-  def test_set_speed_is_current_speed(self):
+  @pytest.mark.parametrize("button", ENGAGE_BUTTONS)
+  def test_set_speed_is_current_speed(self, button):
     for kph in (35, 50.4, 88.6, 120):
       helper = make_helper()
-      press_main(helper, kph)
+      engage(helper, kph, button)
       assert helper.v_cruise_kph == int(round(kph))
       assert helper.v_cruise_cluster_kph == helper.v_cruise_kph
 
-  def test_below_minimum_uses_minimum_not_set_floor(self):
-    # SET floors at V_CRUISE_INITIAL (40 kph); main engage uses the stock minimum, 30 kph / 20 mph
-    assert V_CRUISE_INITIAL == 40
+  @pytest.mark.parametrize("button", ENGAGE_BUTTONS)
+  def test_below_minimum_uses_stock_minimum(self, button):
+    # the stock cruise sets at least 20 mph, not openpilot's 40 kph SET floor
     for v_ego in (0., 5., 20.):
       helper = make_helper()
-      press_main(helper, v_ego, is_metric=True)
+      engage(helper, v_ego, button, is_metric=True)
       assert helper.v_cruise_kph == 30
       helper = make_helper()
-      press_main(helper, v_ego, is_metric=False)
-      assert helper.v_cruise_kph == int(round(20 * CV.MPH_TO_KPH))
+      engage(helper, v_ego, button, is_metric=False)
+      assert helper.v_cruise_kph == MIN_MPH_KPH
 
   def test_clipped_to_max(self):
     helper = make_helper()
-    press_main(helper, 200)
+    engage(helper, 200, ButtonType.mainCruise)
     assert helper.v_cruise_kph == V_CRUISE_MAX
 
-  def test_set_press_unchanged_after_main_engage(self):
-    # engage with main, disengage, then SET: still the SET floor
+  def test_up_in_standby_sets_current_speed_not_the_last(self):
     helper = make_helper()
-    press_main(helper, 10)
-    assert helper.v_cruise_kph == 30
-    helper.initialize_v_cruise(cs(10), False, False)
-    assert helper.v_cruise_kph == V_CRUISE_INITIAL  # the main press is consumed by the first initialize
+    engage(helper, 90, ButtonType.mainCruise)
+    helper.v_cruise_kph_last = helper.v_cruise_kph
+    engage(helper, 60, ButtonType.accelCruise)
+    assert helper.v_cruise_kph == 60
 
-  def test_press_expires(self):
+  def test_pause_key_resumes_the_last_set_speed(self):
     helper = make_helper()
-    helper.update_v_cruise(cs(10, [(ButtonType.mainCruise, True)]), enabled=False, is_metric=True)
-    for _ in range(MAIN_ENGAGE_WINDOW + 1):
-      helper.update_v_cruise(cs(10), enabled=False, is_metric=True)
-    helper.initialize_v_cruise(cs(10), False, False)
-    assert helper.v_cruise_kph == V_CRUISE_INITIAL
+    engage(helper, 90, ButtonType.mainCruise)
+    helper.v_cruise_kph_last = helper.v_cruise_kph
+    engage(helper, 60, ButtonType.resumeCruise)
+    assert helper.v_cruise_kph == 90
 
-  def test_main_off_press_is_not_an_engage_request(self):
-    # the press that turns main off has cruiseState.available False
+  def test_pause_key_without_a_set_speed_sets_current_speed(self):
     helper = make_helper()
-    helper.update_v_cruise(cs(10, [(ButtonType.mainCruise, True)], available=False), enabled=False, is_metric=True)
-    helper.initialize_v_cruise(cs(10), False, False)
-    assert helper.v_cruise_kph == V_CRUISE_INITIAL
+    engage(helper, 60, ButtonType.resumeCruise)
+    assert helper.v_cruise_kph == 60
 
   @pytest.mark.parametrize("brand,param", [("hyundai", 7180), ("hyundai", 7176), ("toyota", SAFETY_PARAM)])
   def test_gate(self, brand, param):
-    # without the safety flag (or on another brand) the main press has no effect on the set speed
+    # without the safety flag (or on another brand): openpilot's own rules, SET floor and accel resumes
     helper = make_helper(brand, param)
-    press_main(helper, 10)
+    engage(helper, 10, ButtonType.mainCruise)
     assert helper.v_cruise_kph == V_CRUISE_INITIAL
-
-  def test_resume_restores_previous_speed_unchanged(self):
-    helper = make_helper()
-    press_main(helper, 90)
-    helper.v_cruise_kph_last = helper.v_cruise_kph
-    helper.initialize_v_cruise(cs(10, [(ButtonType.accelCruise, False)]), False, False)
+    helper.v_cruise_kph = 90
+    helper.v_cruise_kph_last = 90
+    engage(helper, 60, ButtonType.accelCruise)
     assert helper.v_cruise_kph == 90
