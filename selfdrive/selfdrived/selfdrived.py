@@ -130,6 +130,7 @@ class SelfdriveD(CruiseHelper):
     self.mismatch_counter = 0
     self.cruise_mismatch_counter = 0
     self.stock_acc_counter = 0
+    self.resume_key_held = False
     self.last_steering_pressed_frame = 0
     self.last_takeover_frame = 0
     self.distance_traveled = 0
@@ -413,8 +414,12 @@ class SelfdriveD(CruiseHelper):
         self.events.add(EventName.cruiseMismatch)
 
     # the car's own ACC is engaged on the camera while openpilot is not: say so at once and audibly. 0.2 s only: the engage of openpilot
-    # from the same press enables within 0.05 s and must not chime
-    stock_acc = self.sm['carStateSP'].stockAccEngaged and not self.enabled
+    # from the same press enables within 0.05 s and must not chime. The pause key held to resume: the camera resumes while the key is down,
+    # openpilot only on its release
+    for be in CS.buttonEvents:
+      if be.type == ButtonType.resumeCruise:
+        self.resume_key_held = be.pressed
+    stock_acc = self.sm['carStateSP'].stockAccEngaged and not self.enabled and not self.resume_key_held
     self.stock_acc_counter = self.stock_acc_counter + 1 if stock_acc else 0
     if self.stock_acc_counter > int(0.2 / DT_CTRL):
       self.events_sp.add(custom.OnroadEventSP.EventName.stockAccActive)
