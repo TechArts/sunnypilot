@@ -419,6 +419,8 @@ class SelfdriveD(CruiseHelper):
     for be in CS.buttonEvents:
       if be.type == ButtonType.resumeCruise:
         self.resume_key_held = be.pressed
+    if self.enabled or not CS.cruiseState.available:
+      self.resume_key_held = False  # a lost release frame must not mute the alert for good
     stock_acc = self.sm['carStateSP'].stockAccEngaged and not self.enabled and not self.resume_key_held
     self.stock_acc_counter = self.stock_acc_counter + 1 if stock_acc else 0
     if self.stock_acc_counter > int(0.2 / DT_CTRL):
