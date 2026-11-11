@@ -27,6 +27,7 @@ from openpilot.system.hardware import HARDWARE
 from openpilot.sunnypilot.mads.mads import ModularAssistiveDrivingSystem
 from openpilot.sunnypilot import get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.car.car_specific import CarSpecificEventsSP
+from openpilot.sunnypilot.selfdrive.car.main_button_engage import resume_blocked
 from openpilot.sunnypilot.selfdrive.car.cruise_helpers import CruiseHelper
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.controller import IntelligentCruiseButtonManagement
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
@@ -130,6 +131,7 @@ class SelfdriveD(CruiseHelper):
     self.mismatch_counter = 0
     self.cruise_mismatch_counter = 0
     self.stock_acc_counter = 0
+    self.resume_key_held = False
     self.last_steering_pressed_frame = 0
     self.last_takeover_frame = 0
     self.distance_traveled = 0
@@ -217,8 +219,7 @@ class SelfdriveD(CruiseHelper):
       return
 
     # Block resume if cruise never previously enabled
-    resume_pressed = any(be.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be in CS.buttonEvents)
-    if not self.CP.pcmCruise and CS.vCruise > 250 and resume_pressed:
+    if resume_blocked(self.CP, CS):
       self.events.add(EventName.resumeBlocked)
 
     if not self.CP.notCar:
@@ -413,8 +414,14 @@ class SelfdriveD(CruiseHelper):
         self.events.add(EventName.cruiseMismatch)
 
     # the car's own ACC is engaged on the camera while openpilot is not: say so at once and audibly. 0.2 s only: the engage of openpilot
-    # from the same press enables within 0.05 s and must not chime
-    stock_acc = self.sm['carStateSP'].stockAccEngaged and not self.enabled
+    # from the same press enables within 0.05 s and must not chime. The pause key held to resume: the camera resumes while the key is down,
+    # openpilot only on its release
+    for be in CS.buttonEvents:
+      if be.type == ButtonType.resumeCruise:
+        self.resume_key_held = be.pressed
+    if self.enabled or not CS.cruiseState.available:
+      self.resume_key_held = False  # a lost release frame must not mute the alert for good
+    stock_acc = self.sm['carStateSP'].stockAccEngaged and not self.enabled and not self.resume_key_held
     self.stock_acc_counter = self.stock_acc_counter + 1 if stock_acc else 0
     if self.stock_acc_counter > int(0.2 / DT_CTRL):
       self.events_sp.add(custom.OnroadEventSP.EventName.stockAccActive)
