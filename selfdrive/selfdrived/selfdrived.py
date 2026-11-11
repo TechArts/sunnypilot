@@ -422,7 +422,7 @@ class SelfdriveD(CruiseHelper):
     # Send a "steering required alert" if saturation count has reached the limit
     if CS.steeringPressed:
       self.last_steering_pressed_frame = self.sm.frame
-    # same rule as F19 (car_specific): a Hyundai pull at the takeover filter's release torque, or a wheel press, is a takeover; the filter pauses steering
+    # same rule as car_specific's takeover: a Hyundai pull at the takeover filter's release torque, or a wheel press, is a takeover; the filter pauses steering
     # then and resumes it blended, and the model keeps its angle meanwhile, so 'turn exceeds limit' within 2 s of it is the driver's own input
     if CS.steeringPressed or (self.CP.brand == 'hyundai' and abs(CS.steeringTorque) >= HYUNDAI_TAKEOVER_RELEASE_TORQUE):
       self.last_takeover_frame = self.sm.frame
