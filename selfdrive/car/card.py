@@ -206,7 +206,8 @@ class Car:
     self.sm.update(0)
 
     # Genesis: the pause key resumes openpilot cruise from standby (before anything reads the button events)
-    self.pause_resume.update(CS, self.sm['carControl'].enabled)
+    panda_fault = any(ps.heartbeatLost or ps.safetyRxChecksInvalid for ps in self.sm['pandaStates'])
+    self.pause_resume.update(CS, self.sm['carControl'].enabled, panda_fault)
 
     can_rcv_valid = len(can_strs) > 0
 
