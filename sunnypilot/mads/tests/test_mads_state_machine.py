@@ -63,6 +63,20 @@ class TestMADSStateMachine:
         assert State.disabled == self.state_machine.state
         self.clear_events()
 
+  def test_immediate_disable_is_silent_while_paused(self):
+    # the car's ACC fault at ignition off (route 35 14:16.1, 38 7:41.2) came as "TAKE CONTROL IMMEDIATELY" with MADS paused and nothing steering
+    for state in ALL_STATES:
+      for et in MAINTAIN_STATES[state]:
+        self.mads.selfdrive.enabled = False
+        self.mads.selfdrive.state_machine.current_alert_types = []
+        self.events_sp.add(make_event([et, ET.IMMEDIATE_DISABLE]))
+        self.state_machine.state = state
+        self.state_machine.update()
+        assert State.disabled == self.state_machine.state
+        loud = ET.IMMEDIATE_DISABLE in self.mads.selfdrive.state_machine.current_alert_types
+        assert loud == (state in (State.enabled, State.softDisabling, State.overriding)), state
+        self.clear_events()
+
   def test_user_disable(self):
     for state in ALL_STATES:
       for et in MAINTAIN_STATES[state]:
