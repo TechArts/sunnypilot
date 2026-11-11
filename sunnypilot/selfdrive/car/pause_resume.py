@@ -10,13 +10,20 @@ from openpilot.sunnypilot.selfdrive.car.main_button_engage import main_button_en
 ButtonType = structs.CarState.ButtonEvent.Type
 
 
+def panda_fault(pandaStates) -> bool:
+  """The panda state that cancels a pending pause-key resume, the same contract as the panda's (hyundai_common_cancel_resume_fault_check): rx checks
+  invalid. A lost heartbeat re-initializes the panda safety, which drops the panda's request too. The heartbeat engaged-mismatch counts are not
+  visible to openpilot and not part of the contract."""
+  return any(ps.heartbeatLost or ps.safetyRxChecksInvalid for ps in pandaStates)
+
+
 class PauseResumeKey:
   """Genesis (main-button engage): the pause key (CANCEL) is a pause/resume toggle like the stock cruise. A press that starts while openpilot
   cruise is off with main on resumes it on release, like RES: its press and release become resumeCruise events and the release enables. A press
   that starts while engaged stays a cancel. Mirrors the panda (hyundai_common_cruise_buttons_check), which also blocks it on a held brake.
 
   The resume lives for one uninterrupted hold, like the panda's: a brake press (also released again before the key), a main change (off, or off and
-  on again) or a CAN/panda fault (heartbeat lost, rx checks invalid, CAN invalid) while the key is down cancels it; the release is then a plain
+  on again) or a CAN/panda fault (panda_fault, CAN invalid) while the key is down cancels it; the release is then a plain
   cancel and the driver has to start a new press."""
   def __init__(self, CP: structs.CarParams):
     self.active = main_button_engage(CP)

@@ -23,7 +23,7 @@ from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_cap
 
 from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_car_specific_params
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
-from openpilot.sunnypilot.selfdrive.car.pause_resume import PauseResumeKey
+from openpilot.sunnypilot.selfdrive.car.pause_resume import PauseResumeKey, panda_fault
 
 REPLAY = "REPLAY" in os.environ
 
@@ -206,8 +206,7 @@ class Car:
     self.sm.update(0)
 
     # Genesis: the pause key resumes openpilot cruise from standby (before anything reads the button events)
-    panda_fault = any(ps.heartbeatLost or ps.safetyRxChecksInvalid for ps in self.sm['pandaStates'])
-    self.pause_resume.update(CS, self.sm['carControl'].enabled, panda_fault)
+    self.pause_resume.update(CS, self.sm['carControl'].enabled, panda_fault(self.sm['pandaStates']))
 
     can_rcv_valid = len(can_strs) > 0
 
