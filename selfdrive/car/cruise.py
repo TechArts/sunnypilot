@@ -3,8 +3,8 @@ import numpy as np
 
 from cereal import car
 from openpilot.common.constants import CV
-from opendbc.car.hyundai.values import HyundaiSafetyFlags
 from openpilot.sunnypilot.selfdrive.car.cruise_ext import VCruiseHelperSP
+from openpilot.sunnypilot.selfdrive.car.main_button_engage import main_button_engage
 
 
 # WARNING: this value was determined based on the model's training distribution,
@@ -40,9 +40,7 @@ class VCruiseHelper(VCruiseHelperSP):
     self.v_cruise_kph = V_CRUISE_UNSET
     self.v_cruise_cluster_kph = V_CRUISE_UNSET
     self.v_cruise_kph_last = 0
-    # openpilot longitudinal engages on the cruise main button (Hyundai CCNC LFA_ALT), same flag the car interface and panda safety use
-    self.main_button_engage = CP.brand == "hyundai" and bool(CP.safetyConfigs) and \
-                              bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG_MAIN_BUTTON_ENGAGE)
+    self.main_button_engage = main_button_engage(CP)
     self.main_engage_timer = 0
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
