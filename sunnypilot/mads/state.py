@@ -58,8 +58,11 @@ class StateMachine:
         self.ss_state_machine.current_alert_types.append(ET.USER_DISABLE)
 
       elif self.check_contains(ET.IMMEDIATE_DISABLE):
+        # paused steers nothing: there is nothing to take over, so no "take control immediately" (the car's ACC fault at ignition off, route 35 14:16.1)
+        loud = self.state in ACTIVE_STATES
         self.state = State.disabled
-        self.add_current_alert_types(ET.IMMEDIATE_DISABLE)
+        if loud:
+          self.add_current_alert_types(ET.IMMEDIATE_DISABLE)
 
       else:
         # ENABLED
