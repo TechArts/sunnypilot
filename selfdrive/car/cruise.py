@@ -39,6 +39,7 @@ class VCruiseHelper(VCruiseHelperSP):
     self.v_cruise_cluster_kph = V_CRUISE_UNSET
     self.v_cruise_kph_last = 0
     self.main_button_engage = main_button_engage(CP)
+    self.resume_requested = False  # a pause-key release (resumeCruise) is waiting for its enable, kept across card iterations
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
 
@@ -52,6 +53,7 @@ class VCruiseHelper(VCruiseHelperSP):
     self.get_minimum_set_speed(is_metric)
 
     _enabled = self.update_enabled_state(CS, enabled)
+    self.update_resume_request(CS)
 
     if CS.cruiseState.available:
       if not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled):
@@ -129,6 +131,21 @@ class VCruiseHelper(VCruiseHelperSP):
 
     self.v_cruise_kph = np.clip(round(self.v_cruise_kph, 1), self.v_cruise_min, V_CRUISE_MAX)
 
+  def update_resume_request(self, CS) -> None:
+    """Genesis: selfdrived/controlsd enable some card iterations after the pause-key release, so initialize_v_cruise cannot rely on that release being
+    in the carState it is given. The newest engage button decides: a pause-key release asks for the remembered speed, MAIN/SET/up for the current one;
+    main off drops the request."""
+    if not self.main_button_engage:
+      return
+    if not CS.cruiseState.available:
+      self.resume_requested = False
+    for b in CS.buttonEvents:
+      if b.type == ButtonType.resumeCruise:
+        if not b.pressed:
+          self.resume_requested = True
+      elif b.type in (ButtonType.mainCruise, ButtonType.setCruise, ButtonType.decelCruise, ButtonType.accelCruise):
+        self.resume_requested = False
+
   def update_button_timers(self, CS, enabled):
     # increment timer for buttons still pressed
     for k in self.button_timers:
@@ -149,7 +166,9 @@ class VCruiseHelper(VCruiseHelperSP):
     if self.main_button_engage:
       # Genesis buttons, like the stock cruise: the pause key (resumeCruise, see PauseResumeKey) resumes the last set speed; MAIN, SET and up
       # set the current speed, at least 30 kph / 20 mph
-      if any(b.type == ButtonType.resumeCruise for b in CS.buttonEvents) and self.v_cruise_initialized:
+      resume = self.resume_requested or any(b.type == ButtonType.resumeCruise for b in CS.buttonEvents)
+      self.resume_requested = False  # consumed with the enable
+      if resume and self.v_cruise_initialized:
         self.v_cruise_kph = self.v_cruise_kph_last
       else:
         min_speed = MAIN_ENGAGE_MIN_SET_SPEED if is_metric else 20 * CV.MPH_TO_KPH

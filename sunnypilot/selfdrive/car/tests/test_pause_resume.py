@@ -12,12 +12,19 @@ def make_key(safety_param=7180 | HyundaiSafetyFlags.LONG_MAIN_BUTTON_ENGAGE, bra
   return PauseResumeKey(CP)
 
 
-def step(key, pressed, engaged, available=True, brake=False):
-  CS = structs.CarState(brakePressed=brake)
+def step(key, pressed, engaged, available=True, brake=False, can_valid=True, fault=False):
+  CS = structs.CarState(brakePressed=brake, canValid=can_valid)
   CS.cruiseState.available = available
   CS.buttonEvents = [structs.CarState.ButtonEvent(type=ButtonType.cancel, pressed=pressed)]
-  key.update(CS, engaged)
+  key.update(CS, engaged, fault)
   return CS.buttonEvents[0].type, CS.buttonEnable
+
+
+def frame(key, engaged=False, available=True, brake=False, can_valid=True, fault=False):
+  """an ordinary carState frame while the key is held: no button event"""
+  CS = structs.CarState(brakePressed=brake, canValid=can_valid)
+  CS.cruiseState.available = available
+  key.update(CS, engaged, fault)
 
 
 class TestPauseResumeKey:
@@ -36,9 +43,37 @@ class TestPauseResumeKey:
     assert step(key, True, engaged=False, available=False) == (ButtonType.cancel, False)
     assert step(key, False, engaged=False, available=False) == (ButtonType.cancel, False)
     step(key, True, engaged=False)
-    assert step(key, False, engaged=False, brake=True) == (ButtonType.resumeCruise, False)
+    assert step(key, False, engaged=False, brake=True) == (ButtonType.cancel, False)  # held at the release
 
   def test_other_cars_keep_cancel(self):
     for key in (make_key(7180), make_key(brand="toyota")):
       assert step(key, True, engaged=False) == (ButtonType.cancel, False)
       assert step(key, False, engaged=False) == (ButtonType.cancel, False)
+
+  def _hold(self, key, interrupt):
+    assert step(key, True, engaged=False) == (ButtonType.resumeCruise, False)
+    interrupt()
+    return step(key, False, engaged=False)
+
+  def test_brake_pressed_and_released_during_the_hold_cancels_the_resume(self):
+    key = make_key()
+    assert self._hold(key, lambda: (frame(key, brake=True), frame(key, brake=False))) == (ButtonType.cancel, False)
+    assert step(key, True, engaged=False) == (ButtonType.resumeCruise, False)  # a fresh press starts clean
+    assert step(key, False, engaged=False) == (ButtonType.resumeCruise, True)
+
+  def test_main_off_or_off_and_on_during_the_hold_cancels_the_resume(self):
+    for seq in ((False,), (False, True)):
+      key = make_key()
+      def interrupt(key=key, seq=seq):
+        for available in seq:
+          frame(key, available=available)
+      assert self._hold(key, interrupt) == (ButtonType.cancel, False)
+
+  def test_fault_during_the_hold_cancels_the_resume(self):
+    for kw in ({"fault": True}, {"can_valid": False}):
+      key = make_key()
+      assert self._hold(key, lambda key=key, kw=kw: frame(key, **kw)) == (ButtonType.cancel, False)
+
+  def test_uninterrupted_hold_still_resumes(self):
+    key = make_key()
+    assert self._hold(key, lambda: frame(key)) == (ButtonType.resumeCruise, True)
