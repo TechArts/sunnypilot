@@ -360,6 +360,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     e2eChime @23;
     laneChangeRoadEdge @24;
     bigModelReady @25;
+    stockAccActive @26;
   }
 }
 
@@ -453,6 +454,7 @@ struct BackupManagerSP @0xf98d843bfd7004a3 {
 
 struct CarStateSP @0xb86e6369214c01c8 {
   speedLimit @0 :Float32;
+  stockAccEngaged @1 :Bool;  # the car's own ACC is engaged (camera ACCMode)
 }
 
 struct LiveMapDataSP @0xf416ec09499d9d19 {
