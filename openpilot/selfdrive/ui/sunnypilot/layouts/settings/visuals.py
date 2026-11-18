@@ -65,6 +65,14 @@ class VisualsLayout(Widget):
            "It is the driver's responsibility to observe their environment and make decisions accordingly."),
         None,
       ),
+      "RedLightAlert": (
+        lambda: tr("Red Traffic Light Alert (Beta)"),
+        tr("A chime and on-screen alert will play when the driving model plans a stop ahead " +
+           "while you are driving at speed and not slowing down." +
+           "<br>Note: This alert is only designed as a notification. " +
+           "It is the driver's responsibility to observe their environment and make decisions accordingly."),
+        None,
+      ),
       "LeadDepartAlert": (
         lambda: tr("Lead Departure Alert (Beta)"),
         tr("A chime and on-screen alert will play when you are stopped, and the vehicle in front of you start moving." +

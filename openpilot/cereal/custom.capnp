@@ -311,6 +311,7 @@ struct LongitudinalPlanSP @0xf35cc4560bbf6ec2 {
   struct E2eAlerts {
     greenLightAlert @0 :Bool;
     leadDepartAlert @1 :Bool;
+    redLightAlert @2 :Bool;
   }
 }
 
@@ -360,6 +361,7 @@ struct OnroadEventSP @0xda96579883444c35 {
     e2eChime @23;
     laneChangeRoadEdge @24;
     bigModelReady @25;
+    redLightAlert @26;
   }
 }
 
@@ -389,6 +391,13 @@ struct CarControlSP @0xa5cd762cd951a455 {
   leadOne @2 :LeadData;
   leadTwo @3 :LeadData;
   intelligentCruiseButtonManagement @4 :IntelligentCruiseButtonManagement;
+  clusterAlert @5 :ClusterAlert;  # one-shot red/green-light cue for the car's instrument cluster
+
+  enum ClusterAlert {
+    none @0;
+    red @1;
+    green @2;
+  }
 
   struct Param {
     key @0 :Text;
