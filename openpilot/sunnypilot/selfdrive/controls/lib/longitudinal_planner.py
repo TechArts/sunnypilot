@@ -12,6 +12,7 @@ from openpilot.selfdrive.car.cruise import V_CRUISE_MAX
 from openpilot.selfdrive.controls.lib.accel_boost import AccelBoost
 from openpilot.sunnypilot.selfdrive.controls.lib.accel_boost import AccelBoostSP
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
+from openpilot.sunnypilot.selfdrive.controls.lib.red_light_alert import RedLightAlertHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
@@ -31,6 +32,7 @@ class LongitudinalPlannerSP:
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
     self.source = LongitudinalPlanSource.cruise
     self.e2e_alerts_helper = E2EAlertsHelper()
+    self.red_light_alert_helper = RedLightAlertHelper()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -73,6 +75,7 @@ class LongitudinalPlannerSP:
 
     self.events_sp.clear()
     self.e2e_alerts_helper.update(sm, self.events_sp)
+    self.red_light_alert_helper.update(sm, self.events_sp)
 
   def publish_longitudinal_plan_sp(self, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
     plan_sp_send = messaging.new_message('longitudinalPlanSP')
@@ -127,5 +130,10 @@ class LongitudinalPlannerSP:
     e2eAlerts = longitudinalPlanSP.e2eAlerts
     e2eAlerts.greenLightAlert = self.e2e_alerts_helper.green_light_alert
     e2eAlerts.leadDepartAlert = self.e2e_alerts_helper.lead_depart_alert
+    e2eAlerts.redLightAlert = self.red_light_alert_helper.red_light_alert
 
     pm.send('longitudinalPlanSP', plan_sp_send)
+
+    # mark the moment a red/green-light alert fires so the clip can be labelled later (loggerd keeps the segment of a userBookmark)
+    if e2eAlerts.redLightAlert or e2eAlerts.greenLightAlert or e2eAlerts.leadDepartAlert:
+      pm.send('userBookmark', messaging.new_message('userBookmark', valid=True))

@@ -241,6 +241,14 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
+  EventNameSP.redLightAlert: {
+    ET.PERMANENT: Alert(
+      "Red light ahead",
+      "",
+      AlertStatus.userPrompt, AlertSize.small,
+      Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
   EventNameSP.laneChangeRoadEdge: {
     ET.WARNING: Alert(
       "Lane Change Unavailable: Road Edge",
