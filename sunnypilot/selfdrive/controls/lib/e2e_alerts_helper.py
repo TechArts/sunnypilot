@@ -15,6 +15,7 @@ from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 GREEN_LIGHT_X_THRESHOLD = 30
 LEAD_DEPART_DIST_THRESHOLD = 1.0
 TRIGGER_TIMER_THRESHOLD = 0.3
+GO_WAIT = 1.0  # s, after a green / lead-depart trigger the chime waits this long for the car to start moving by itself (cruise or the driver)
 
 GearShifter = car.CarState.GearShifter
 NOT_DRIVING_GEARS = (GearShifter.park, GearShifter.reverse, GearShifter.neutral, GearShifter.unknown)
@@ -53,6 +54,11 @@ class E2EAlertsHelper:
     self.lead_depart_confirmed_lead = False
     self.lead_depart_armed = False
 
+    self.moving = False
+    self.pending_frame: int | None = None  # frame of a trigger that waits GO_WAIT before it chimes
+    self.pending_green = False
+    self.stop_chimed = False  # one chime per stop (green and lead-depart share it), cleared when the car moves
+
   def _read_params(self) -> None:
     if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
       self.green_light_alert_enabled = self._params.get_bool("GreenLightAlert")
@@ -60,7 +66,6 @@ class E2EAlertsHelper:
 
   def update_alert_trigger(self, sm: messaging.SubMaster):
     CS = sm['carState']
-    CC = sm['carControl']
 
     model_x = sm['modelV2'].position.x
     max_idx = len(model_x) - 1
@@ -77,7 +82,9 @@ class E2EAlertsHelper:
     # only while stopped in a forward gear: in park or reverse (parking, backing away from a car) a 'lead departing' or a long model path
     # is not a cue to drive off
     in_drive = CS.gearShifter not in NOT_DRIVING_GEARS
-    self.allowed = in_drive and not moving and not CS.gasPressed and not CC.enabled and not recent_moving
+    # universal: openpilot cruise on or off (the chime waits for the car to start moving by itself, see update())
+    self.allowed = in_drive and not moving and not CS.gasPressed and not recent_moving
+    self.moving = moving
 
     # Green Light Alert
     green_light_trigger = False
@@ -170,7 +177,22 @@ class E2EAlertsHelper:
       lead_depart_trigger
     )
 
-    if self.green_light_alert or self.lead_depart_alert:
+    # The chime sounds only if the car is still stopped GO_WAIT after the trigger with no gas: a car that starts moving by itself (openpilot or the car's
+    # cruise, the driver) needs no cue. Once per stop. The published flags mark the chime frame (bookmark, cluster cue).
+    triggered = self.green_light_alert or self.lead_depart_alert
+    if self.moving:
+      self.stop_chimed = False
+    if not self.allowed:
+      self.pending_frame = None
+    elif triggered and self.pending_frame is None and not self.stop_chimed:
+      self.pending_frame, self.pending_green = self.frame, self.green_light_alert
+    if self.pending_frame is not None and not (self.green_light_alert_enabled if self.pending_green else self.lead_depart_alert_enabled):
+      self.pending_frame = None  # its alert was turned off during the wait
+    chime = self.pending_frame is not None and (self.frame - self.pending_frame) * DT_MDL >= GO_WAIT
+    self.green_light_alert = chime and self.pending_green
+    self.lead_depart_alert = chime and not self.pending_green
+    if chime:
       events_sp.add(custom.OnroadEventSP.EventName.e2eChime)
+      self.stop_chimed, self.pending_frame = True, None
 
     self.frame += 1
