@@ -7,7 +7,6 @@ from openpilot.selfdrive.ui.mici.onroad.augmented_road_view import AugmentedRoad
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.selfdrive.ui.mici.layouts.onboarding import OnboardingWindow
 from openpilot.selfdrive.ui.body.layouts.onroad import BodyLayout
-from openpilot.selfdrive.ui.sunnypilot.alert_bookmark import publish_alert_bookmark
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.scroller import Scroller
 from openpilot.system.ui.lib.application import gui_app
@@ -24,6 +23,7 @@ class MiciMainLayout(Scroller):
     super().__init__(snap_items=True, spacing=0, pad=0, scroll_indicator=False, edge_shadows=False)
 
     self._pm = messaging.PubMaster(['bookmarkButton', 'userBookmark'])
+    ui_state.bookmark_pm = self._pm  # ui_state forwards red/green-light alert bookmarks through this single userBookmark publisher
 
     self._prev_onroad = False
     self._prev_standstill = False
@@ -94,7 +94,6 @@ class MiciMainLayout(Scroller):
 
   def _update_state(self):
     super()._update_state()
-    publish_alert_bookmark(ui_state.sm, self._pm)
     # TODO: Hack to run alert updates while not in view. Add a nav stack tick?
     self._alerts_layout._update_state()
 
