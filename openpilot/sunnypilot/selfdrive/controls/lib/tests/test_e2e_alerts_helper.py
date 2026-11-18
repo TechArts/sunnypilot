@@ -11,7 +11,7 @@ import pytest
 from opendbc.car import structs
 from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot.selfdrive.controls.lib import e2e_alerts_helper
-from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper, GO_WAIT, GREEN_LIGHT_X_THRESHOLD
+from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper, BRAKE_GO_LOOKBACK, GO_WAIT, GREEN_LIGHT_X_THRESHOLD
 
 GEAR_DRIVE = structs.CarState.GearShifter.drive
 GO_WAIT_FRAMES = round(GO_WAIT / DT_MDL)
@@ -46,8 +46,8 @@ def disable(helper, key):
   helper.lead_depart_alert_enabled = FakeParams().get_bool("LeadDepartAlert")
 
 
-def sm(v_ego=0.0, gas=False, path_end=5.0, lead_d=None):
-  cs = SimpleNamespace(standstill=v_ego < 0.1, vEgo=v_ego, gearShifter=GEAR_DRIVE, gasPressed=gas)
+def sm(v_ego=0.0, gas=False, path_end=5.0, lead_d=None, brake=False):
+  cs = SimpleNamespace(standstill=v_ego < 0.1, vEgo=v_ego, gearShifter=GEAR_DRIVE, gasPressed=gas, brakePressed=brake)
   lead = SimpleNamespace(present=lead_d is not None, dRel=lead_d if lead_d is not None else 0.0)
   return {'carState': cs, 'modelV2': SimpleNamespace(position=SimpleNamespace(x=[0.0, path_end])), 'radarState': SimpleNamespace(leadOne=lead)}
 
@@ -63,10 +63,23 @@ def run(helper, events, frames, **kw):
   return chimed
 
 
-def stop(helper, events, lead_d=None):
+def stop(helper, events, lead_d=None, brake=False):
   """Drive, then stand still long enough for the cue to be allowed (2 s after moving), with a short model path (red light)."""
   run(helper, events, 20, v_ego=10.0, lead_d=lead_d)
-  assert run(helper, events, round(3.0 / DT_MDL), lead_d=lead_d) == []
+  assert run(helper, events, round(3.0 / DT_MDL), lead_d=lead_d, brake=brake) == []
+
+
+def frames(seconds):
+  return round(seconds / DT_MDL)
+
+
+def green_until_trigger(helper, events, brake=True):
+  """Clear the path (green) with the brake in the given state until the trigger starts the wait; no chime before it."""
+  for _ in range(frames(2.0)):
+    assert run(helper, events, 1, path_end=GREEN_LIGHT_X_THRESHOLD + 20.0, brake=brake) == []
+    if helper.pending_frame is not None:
+      return
+  raise AssertionError("no trigger")
 
 
 class TestGreenChimeUniversal:
@@ -137,3 +150,79 @@ class TestGreenChimeUniversal:
     assert helper.pending_frame is not None and not helper.pending_green
     disable(helper, "LeadDepartAlert")
     assert run(helper, events, round(3.0 / DT_MDL), lead_d=7.5) == []
+
+
+class TestBrakeReleaseIsGoing:
+  """F32: the driver letting go of the brake means they are already going; the chime is for a driver who has not noticed."""
+  GREEN = GREEN_LIGHT_X_THRESHOLD + 20.0
+
+  @pytest.mark.parametrize("release_after", [0.2, 0.5, 0.6, 0.8])  # routes 5d/5e: released 0.2-0.8 s after the trigger, the chime came after
+  def test_release_during_the_wait_does_not_chime(self, helper, release_after):
+    events = FakeEvents()
+    stop(helper, events, brake=True)
+    green_until_trigger(helper, events)
+    assert run(helper, events, frames(release_after), path_end=self.GREEN, brake=True) == []
+    assert run(helper, events, frames(3.0), path_end=self.GREEN) == []
+
+  def test_release_after_the_chime_keeps_the_chime(self, helper):
+    """Route 5d 3:25.6: the chime came 0.4 s before the driver let go."""
+    events = FakeEvents()
+    stop(helper, events, brake=True)
+    green_until_trigger(helper, events)
+    assert len(run(helper, events, frames(GO_WAIT + 0.2), path_end=self.GREEN, brake=True)) == 1
+    assert run(helper, events, frames(3.0), path_end=self.GREEN) == []
+
+  def test_brake_held_through_the_wait_chimes(self, helper):
+    events = FakeEvents()
+    stop(helper, events, brake=True)
+    green_until_trigger(helper, events)
+    assert len(run(helper, events, frames(3.0), path_end=self.GREEN, brake=True)) == 1
+
+  def test_release_just_before_the_trigger_does_not_chime(self, helper):
+    """The driver saw the green before the model's path cleared."""
+    events = FakeEvents()
+    stop(helper, events, brake=True)
+    run(helper, events, frames(BRAKE_GO_LOOKBACK / 2), brake=False)
+    assert run(helper, events, frames(5.0), path_end=self.GREEN) == []
+
+  def test_foot_off_long_before_the_green_chimes(self, helper):
+    """The car holds the stop (Auto Hold, openpilot cruise): no release near the green, so the chime stays."""
+    events = FakeEvents()
+    stop(helper, events, brake=True)
+    run(helper, events, frames(BRAKE_GO_LOOKBACK + 2.0), brake=False)
+    assert len(run(helper, events, frames(5.0), path_end=self.GREEN)) == 1
+
+  def test_no_brake_at_all_chimes(self, helper):
+    """openpilot cruise holding the stop: the brake is never pressed (a press ends cruise)."""
+    events = FakeEvents()
+    stop(helper, events)
+    assert len(run(helper, events, frames(5.0), path_end=self.GREEN)) == 1
+
+  def test_release_then_brake_again_chimes(self, helper):
+    """A release followed by a new press before the trigger: the driver is not going."""
+    events = FakeEvents()
+    stop(helper, events, brake=True)
+    run(helper, events, frames(0.2), brake=False)
+    green_until_trigger(helper, events, brake=True)
+    assert len(run(helper, events, frames(3.0), path_end=self.GREEN, brake=True)) == 1
+
+  def test_release_then_brake_again_during_the_wait_chimes(self, helper):
+    """Released 0.2 s after the trigger, pressed again at 0.4 s, the car never moved: the driver is not going."""
+    events = FakeEvents()
+    stop(helper, events, brake=True)
+    green_until_trigger(helper, events)
+    assert run(helper, events, frames(0.2), path_end=self.GREEN, brake=True) == []
+    assert run(helper, events, frames(0.2), path_end=self.GREEN) == []
+    assert len(run(helper, events, frames(3.0), path_end=self.GREEN, brake=True)) == 1
+
+  def test_lead_departure_release_during_the_wait_does_not_chime(self, helper):
+    """Route 5d 3:07.4: the car ahead pulled away, the driver let go of the brake before the chime."""
+    events = FakeEvents()
+    stop(helper, events, lead_d=4.0, brake=True)
+    for _ in range(frames(2.0)):
+      run(helper, events, 1, lead_d=7.5, brake=True)
+      if helper.pending_frame is not None:
+        break
+    assert helper.pending_frame is not None and not helper.pending_green
+    run(helper, events, frames(0.2), lead_d=7.5, brake=True)
+    assert run(helper, events, frames(3.0), lead_d=7.5) == []

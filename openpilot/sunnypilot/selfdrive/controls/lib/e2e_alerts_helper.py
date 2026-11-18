@@ -17,6 +17,7 @@ GREEN_LIGHT_X_THRESHOLD = 30
 LEAD_DEPART_DIST_THRESHOLD = 1.0
 TRIGGER_TIMER_THRESHOLD = 0.3
 GO_WAIT = 1.0  # s, after a green / lead-depart trigger the chime waits this long for the car to start moving by itself (cruise or the driver)
+BRAKE_GO_LOOKBACK = 1.0  # s, a brake release this long before a trigger (or any time during its wait) means the driver is already going
 
 GearShifter = structs.CarState.GearShifter
 NOT_DRIVING_GEARS = (GearShifter.park, GearShifter.reverse, GearShifter.neutral, GearShifter.unknown)
@@ -59,6 +60,8 @@ class E2EAlertsHelper:
     self.pending_frame: int | None = None  # frame of a trigger that waits GO_WAIT before it chimes
     self.pending_green = False
     self.stop_chimed = False  # one chime per stop (green and lead-depart share it), cleared when the car moves
+    self.brake_pressed = False
+    self.last_brake_release_frame: int | None = None
 
   def _read_params(self) -> None:
     if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
@@ -75,6 +78,10 @@ class E2EAlertsHelper:
 
     standstill = CS.standstill
     moving = not standstill and CS.vEgo > 0.1
+
+    if self.brake_pressed and not CS.brakePressed:
+      self.last_brake_release_frame = self.frame
+    self.brake_pressed = CS.brakePressed
 
     if moving:
       self.last_moving_frame = self.frame
@@ -136,6 +143,12 @@ class E2EAlertsHelper:
 
     return green_light_trigger, lead_depart_trigger
 
+  def _driver_released_brake(self, since_frame: int) -> bool:
+    """The driver let go of the brake at most BRAKE_GO_LOOKBACK before since_frame and has not pressed it again: already going.
+    A release edge, not 'brake up': with the car holding the stop (Auto Hold, openpilot cruise) the foot is already off the brake."""
+    return (not self.brake_pressed and self.last_brake_release_frame is not None and
+            self.last_brake_release_frame >= since_frame - round(BRAKE_GO_LOOKBACK / DT_MDL))
+
   @staticmethod
   def update_state_machine(state: int, enabled: bool, allowed: bool, triggered: bool) -> tuple[int, bool]:
     if state != E2EStates.INACTIVE:
@@ -178,8 +191,9 @@ class E2EAlertsHelper:
       lead_depart_trigger
     )
 
-    # The chime sounds only if the car is still stopped GO_WAIT after the trigger with no gas: a car that starts moving by itself (openpilot or the car's
-    # cruise, the driver) needs no cue. Once per stop. The published flags mark the chime frame (bookmark, cluster cue).
+    # The chime sounds only if the car is still stopped GO_WAIT after the trigger with no gas and no brake release: a car that starts moving by itself
+    # (openpilot or the car's cruise, the driver) or a driver who already let go of the brake needs no cue. Once per stop. The published flags mark
+    # the chime frame (bookmark, cluster cue).
     triggered = self.green_light_alert or self.lead_depart_alert
     if self.moving:
       self.stop_chimed = False
@@ -189,7 +203,10 @@ class E2EAlertsHelper:
       self.pending_frame, self.pending_green = self.frame, self.green_light_alert
     if self.pending_frame is not None and not (self.green_light_alert_enabled if self.pending_green else self.lead_depart_alert_enabled):
       self.pending_frame = None  # its alert was turned off during the wait
-    chime = self.pending_frame is not None and (self.frame - self.pending_frame) * DT_MDL >= GO_WAIT
+    due = self.pending_frame is not None and (self.frame - self.pending_frame) * DT_MDL >= GO_WAIT
+    if due and self._driver_released_brake(self.pending_frame):
+      self.pending_frame = None  # decided at the deadline: the driver let go of the brake and has not pressed it again, already going
+    chime = due and self.pending_frame is not None
     self.green_light_alert = chime and self.pending_green
     self.lead_depart_alert = chime and not self.pending_green
     if chime:
