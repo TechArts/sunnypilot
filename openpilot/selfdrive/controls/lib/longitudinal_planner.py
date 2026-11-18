@@ -15,6 +15,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
+from openpilot.sunnypilot.selfdrive.controls.lib.gas_resume import GasResume
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerSP
 
 J_CRUISE_VALS = [1.6, 1.2, 0.8, 0.6]
@@ -39,6 +40,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.fcw = False
     self.dt = dt
     self.accel_boost = AccelBoost()
+    self.gas_resume = GasResume(dt)
 
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
     self.a_cruise = init_a
@@ -118,6 +120,10 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
+
+    # after a gas override above the set speed: coast down instead of snapping back to it (not with a lead, not slowing for a stop)
+    self.output_a_target = self.gas_resume.update(sm['carState'].gasPressed, v_ego, v_cruise, sm['radarState'].leadOne.present,
+                                                  sm['controlsState'].forceDecel or self.output_should_stop, self.output_a_target)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 
