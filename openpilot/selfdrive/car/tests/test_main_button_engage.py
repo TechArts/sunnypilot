@@ -3,6 +3,7 @@ Genesis (main-button engage, SP safety flag MAIN_BUTTON_ENGAGE): MAIN, SET and u
 like the stock cruise. Drives the card -> selfdrived -> card pipeline, including the enable that card sees a few iterations late.
 """
 from openpilot.cereal import custom, log
+from opendbc.car import structs
 from opendbc.car.structs import car
 from opendbc.sunnypilot.car.hyundai.values import HyundaiSafetyFlagsSP
 from openpilot.common.constants import CV
@@ -11,6 +12,7 @@ from openpilot.selfdrive.car.cruise import VCruiseHelper, V_CRUISE_INITIAL, V_CR
 from openpilot.selfdrive.selfdrived.events import Events, EventName
 from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.sunnypilot.selfdrive.car.main_button_engage import resume_blocked
+from openpilot.sunnypilot.selfdrive.car.pause_resume import PauseResumeKey
 
 ButtonEvent = car.CarState.ButtonEvent
 ButtonType = car.CarState.ButtonEvent.Type
@@ -107,6 +109,7 @@ class Drive:
   def __init__(self, enable_delay=0, sp_param=MAIN_BUTTON_ENGAGE):
     self.CP, self.CP_SP = make_cp(sp_param=sp_param)
     self.helper = VCruiseHelper(self.CP, self.CP_SP)
+    self.key = PauseResumeKey(self.CP, self.CP_SP)
     self.sm = StateMachine()
     self.enable_delay = enable_delay
     self.cc_enabled = False                # carControl.enabled as card sees it
@@ -119,10 +122,15 @@ class Drive:
     # card
     visible = self.history[-1 - self.enable_delay] if len(self.history) > self.enable_delay else False
     was, self.cc_enabled = self.cc_enabled, visible
+    # the pause key resumes from standby (card, before anything reads the button events)
+    ks = structs.CarState(brakePressed=brake, canValid=True)
+    ks.cruiseState.available = available
+    ks.buttonEvents = [structs.CarState.ButtonEvent(type=t, pressed=p) for t, p in buttons]
     # opendbc update_button_enable: SET/RES (decel/accel) release enables with the camera's main on
-    button_enable = available and any(t in (ButtonType.accelCruise, ButtonType.decelCruise) and not p for t, p in buttons)
-    cs = car.CarState(vEgo=v_kph * CV.KPH_TO_MS, brakePressed=brake, canValid=True, buttonEnable=button_enable, vCruise=self.vCruise,
-                      cruiseState={"available": available}, buttonEvents=[ButtonEvent(type=t, pressed=p) for t, p in buttons])
+    ks.buttonEnable = available and any(be.type in (ButtonType.accelCruise, ButtonType.decelCruise) and not be.pressed for be in ks.buttonEvents)
+    self.key.update(ks, self.cc_enabled)
+    cs = car.CarState(vEgo=v_kph * CV.KPH_TO_MS, brakePressed=brake, canValid=True, buttonEnable=ks.buttonEnable, vCruise=self.vCruise,
+                      cruiseState={"available": available}, buttonEvents=[ButtonEvent(type=be.type, pressed=be.pressed) for be in ks.buttonEvents])
     self.helper.update_v_cruise(cs, self.cc_enabled, True)
     if self.cc_enabled and not was:
       self.helper.initialize_v_cruise(self.prev or cs, 0, True)
@@ -191,6 +199,42 @@ class TestEnginePipeline(OpenpilotTestCase):
       for button in (ButtonType.decelCruise, ButtonType.accelCruise):
         d = Drive(enable_delay=delay)
         d.run(2, v_kph=50)
+        tap(d, button, 50)
+        d.run(delay + 3, v_kph=50)
+        assert d.cc_enabled and d.helper.v_cruise_kph == 50, (delay, button)
+
+  def test_pause_with_no_remembered_speed_engages_at_the_current_speed(self):
+    d = Drive()
+    d.run(3, v_kph=70)
+    tap(d, ButtonType.cancel, 70)
+    assert not d.blocked
+    d.run(2, v_kph=70)
+    assert d.cc_enabled and d.helper.v_cruise_kph == 70
+
+  def test_delayed_enable_pause_restores_the_remembered_speed(self):
+    for delay in (0, 1, 3, 8):
+      d = Drive(enable_delay=delay)
+      d.run(2, v_kph=90)
+      tap(d, ButtonType.decelCruise, 90)
+      d.run(delay + 3, v_kph=90)
+      assert d.cc_enabled and d.helper.v_cruise_kph == 90, delay
+      tap(d, ButtonType.cancel, 90)  # pause
+      d.run(delay + 3, v_kph=90)
+      assert not d.cc_enabled, delay
+      tap(d, ButtonType.cancel, 50)  # resume while rolling at 50: remembered 90, not the current speed
+      d.run(delay + 3, v_kph=50)
+      assert d.cc_enabled and d.helper.v_cruise_kph == 90, delay
+
+  def test_delayed_enable_set_up_after_pause_use_the_current_speed(self):
+    for delay in (0, 1, 3, 8):
+      for button in (ButtonType.decelCruise, ButtonType.accelCruise):
+        d = Drive(enable_delay=delay)
+        d.run(2, v_kph=90)
+        tap(d, ButtonType.decelCruise, 90)
+        d.run(delay + 3, v_kph=90)
+        tap(d, ButtonType.cancel, 90)
+        d.run(delay + 3, v_kph=90)
+        assert not d.cc_enabled, (delay, button)
         tap(d, button, 50)
         d.run(delay + 3, v_kph=50)
         assert d.cc_enabled and d.helper.v_cruise_kph == 50, (delay, button)
