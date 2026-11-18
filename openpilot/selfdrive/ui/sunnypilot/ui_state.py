@@ -10,6 +10,7 @@ from openpilot.cereal import messaging, log, custom
 from opendbc.car.structs import car
 from opendbc.sunnypilot.car.interfaces import has_bsm
 from openpilot.common.params import Params
+from openpilot.selfdrive.ui.sunnypilot.alert_bookmark import publish_alert_bookmark
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.display import OnroadBrightness
 from openpilot.sunnypilot.models.helpers import ACTIVE_BUNDLE_KEYS, get_active_source
 from openpilot.sunnypilot.sunnylink.sunnylink_state import SunnylinkState
@@ -66,8 +67,12 @@ class UIStateSP:
     self.custom_torque_params: bool = False
     self.torque_override_enabled: bool = False
     self._sp_initialized: bool = False
+    self.bookmark_pm: messaging.PubMaster | None = None  # set by the main layout, the UI's only userBookmark publisher
 
   def update(self) -> None:
+    if self.bookmark_pm is not None:
+      publish_alert_bookmark(self.sm, self.bookmark_pm)
+
     if self.sunnylink_enabled:
       self.sunnylink_state.start()
     else:
