@@ -30,6 +30,7 @@ from openpilot.sunnypilot.mads.mads import ModularAssistiveDrivingSystem
 from openpilot.sunnypilot import get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.car.car_specific import CarSpecificEventsSP
 from openpilot.sunnypilot.selfdrive.car.main_button_engage import resume_blocked
+from openpilot.sunnypilot.selfdrive.car.hyundai_takeover import hyundai_takeover, TAKEOVER_ALERT_WINDOW
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.controller import IntelligentCruiseButtonManagement
 from openpilot.sunnypilot.selfdrive.selfdrived.button_state_tracker import ButtonStateTracker
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
@@ -76,7 +77,7 @@ class SelfdriveD:
     else:
       self.CP_SP = CP_SP
 
-    self.car_events = CarEvents(self.CP)
+    self.car_events = CarEvents(self.CP, self.CP_SP)
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -472,9 +473,11 @@ class SelfdriveD:
         self.events.add(EventName.cruiseMismatch)
 
     # Send a "steering required alert" if saturation count has reached the limit
-    if CS.steeringPressed:
+    # a wheel press or, on Hyundai, a pull at the takeover filter's release torque is a takeover; the filter pauses steering then and resumes it
+    # blended, and the model keeps its angle meanwhile, so 'turn exceeds limit' within 2 s of it is the driver's own input
+    if hyundai_takeover(self.CP, self.CP_SP, CS, release=True):
       self.last_steering_pressed_frame = self.sm.frame
-    recent_steer_pressed = (self.sm.frame - self.last_steering_pressed_frame)*DT_CTRL < 2.0
+    recent_steer_pressed = (self.sm.frame - self.last_steering_pressed_frame)*DT_CTRL < TAKEOVER_ALERT_WINDOW
     controlstate = self.sm['controlsState']
     lac = getattr(controlstate.lateralControlState, controlstate.lateralControlState.which())
     if lac.active and not recent_steer_pressed and not self.CP.notCar:
