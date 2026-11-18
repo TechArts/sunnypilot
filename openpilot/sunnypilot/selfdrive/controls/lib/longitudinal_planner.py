@@ -133,7 +133,3 @@ class LongitudinalPlannerSP:
     e2eAlerts.redLightAlert = self.red_light_alert_helper.red_light_alert
 
     pm.send('longitudinalPlanSP', plan_sp_send)
-
-    # mark the moment a red/green-light alert fires so the clip can be labelled later (loggerd keeps the segment of a userBookmark)
-    if e2eAlerts.redLightAlert or e2eAlerts.greenLightAlert or e2eAlerts.leadDepartAlert:
-      pm.send('userBookmark', messaging.new_message('userBookmark', valid=True))
