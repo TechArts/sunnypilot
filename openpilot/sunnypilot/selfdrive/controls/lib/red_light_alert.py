@@ -92,7 +92,7 @@ class RedLightAlertHelper:
     model = sm['modelV2']
     lead = sm['radarState'].leadOne
 
-    stop_planned = model_plans_stop(model.position.x, model.velocity.x, CS.vEgo, lead.status, lead.dRel)
+    stop_planned = model_plans_stop(model.position.x, model.velocity.x, CS.vEgo, lead.present, lead.dRel)
     return red_ahead_not_slowing(CS.vEgo, CS.aEgo, CS.brakePressed, CS.leftBlinker or CS.rightBlinker, stop_planned)
 
   def update(self, sm: messaging.SubMaster, events_sp: EventsSP) -> None:

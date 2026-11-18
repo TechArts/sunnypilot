@@ -4,6 +4,8 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
+from types import SimpleNamespace
+
 import pytest
 
 from openpilot.common.constants import CV
@@ -125,3 +127,27 @@ class TestRedLightDebounce:
     helper.enabled = False
     assert not any(run(helper, True, FRAMES_HOLD * 5))
     assert helper.state == RedLightStates.ARMED
+
+
+class TestUpdateReadsRealRadarSchema:
+  """RadarState.LeadData has 'present' (no 'status'): a stand-in that only has the real fields makes any other lead access fail."""
+
+  @staticmethod
+  def sm(lead):
+    model = SimpleNamespace(position=SimpleNamespace(x=path(stop_dist=60.0)[0]), velocity=SimpleNamespace(x=path(stop_dist=60.0)[1]))
+    car_state = SimpleNamespace(vEgo=V_CRUISING, aEgo=0.0, brakePressed=False, leftBlinker=False, rightBlinker=False)
+    return {'carState': car_state, 'modelV2': model, 'radarState': SimpleNamespace(leadOne=lead)}
+
+  def test_read_condition_with_no_lead(self):
+    assert RedLightAlertHelper.read_condition(self.sm(SimpleNamespace(present=False, dRel=0.0)))
+
+  def test_read_condition_with_lead_at_the_stop(self):
+    assert not RedLightAlertHelper.read_condition(self.sm(SimpleNamespace(present=True, dRel=55.0)))
+
+  def test_update_fires_with_events(self, helper):
+    events = SimpleNamespace(names=[], add=lambda name: events.names.append(name))
+    sm = self.sm(SimpleNamespace(present=False, dRel=0.0))
+    for _ in range(FRAMES_HOLD):
+      helper.update(sm, events)
+    assert helper.red_light_alert
+    assert len(events.names) == 1
