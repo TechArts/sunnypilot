@@ -6,6 +6,7 @@ from opendbc.car.interfaces import MAX_CTRL_SPEED
 from opendbc.car.toyota.values import ToyotaFlags
 
 from openpilot.selfdrive.selfdrived.events import Events
+from openpilot.sunnypilot.selfdrive.car.hyundai_takeover import hyundai_takeover, TAKEOVER_ALERT_WINDOW
 
 ButtonType = structs.CarState.ButtonEvent.Type
 GearShifter = structs.CarState.GearShifter
@@ -14,8 +15,9 @@ NetworkLocation = structs.CarParams.NetworkLocation
 
 
 class CarEvents:
-  def __init__(self, CP: structs.CarParams):
+  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
     self.CP = CP
+    self.CP_SP = CP_SP
 
     self.steering_unpressed = 0
     self.low_speed_alert = False
@@ -163,15 +165,16 @@ class CarEvents:
         events.add(EventName.buttonCancel)
 
     # Handle permanent and temporary steering faults
-    self.steering_unpressed = 0 if CS.steeringPressed else self.steering_unpressed + 1
+    # a takeover is the wheel pressed or a Hyundai pull at the opendbc takeover filter's torque (the car pauses steering then)
+    self.steering_unpressed = 0 if hyundai_takeover(self.CP, self.CP_SP, CS) else self.steering_unpressed + 1
     if CS.steerFaultTemporary:
       if CS.steeringPressed and (not CS_prev.steerFaultTemporary or self.no_steer_warning):
         self.no_steer_warning = True
       else:
         self.no_steer_warning = False
 
-        # if the user overrode recently, show a less harsh alert
-        if self.silent_steer_warning or CS.standstill or self.steering_unpressed < int(1.5 / DT_CTRL):
+        # a fault that starts during or just after a takeover, or when stopped, is the driver's doing: visual text only
+        if self.silent_steer_warning or CS.standstill or self.steering_unpressed < int(TAKEOVER_ALERT_WINDOW / DT_CTRL):
           self.silent_steer_warning = True
           events.add(EventName.steerTempUnavailableSilent)
         else:
