@@ -74,9 +74,19 @@ class TestPauseResumeKey(OpenpilotTestCase):
       assert self._hold(key, interrupt) == (ButtonType.cancel, False)
 
   def test_fault_during_the_hold_cancels_the_resume(self):
-    for kw in ({"fault": True}, {"can_valid": False}):
-      key = make_key()
-      assert self._hold(key, lambda key=key, kw=kw: frame(key, **kw)) == (ButtonType.cancel, False)
+    key = make_key()
+    assert self._hold(key, lambda: frame(key, fault=True)) == (ButtonType.cancel, False)
+
+  def test_can_invalid_or_timeout_during_the_hold_does_not_diverge_from_the_panda(self):
+    # the panda only drops the request on brake, main change, rx checks invalid and reset; a non-rx-checked message timing out is none of them
+    key = make_key()
+    assert self._hold(key, lambda: frame(key, can_valid=False)) == (ButtonType.resumeCruise, True)
+    key = make_key()
+    assert step(key, True, engaged=False) == (ButtonType.resumeCruise, False)
+    CS = structs.CarState(canValid=False, canTimeout=True)
+    CS.cruiseState.available = True
+    key.update(CS, False)
+    assert step(key, False, engaged=False, can_valid=False) == (ButtonType.resumeCruise, True)
 
   def test_uninterrupted_hold_still_resumes(self):
     key = make_key()

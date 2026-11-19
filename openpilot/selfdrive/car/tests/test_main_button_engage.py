@@ -101,6 +101,17 @@ class TestMainButtonEngage(OpenpilotTestCase):
       engage(helper, 60, ButtonType.accelCruise)
       assert helper.v_cruise_kph == 90, (brand, sp_param)
 
+  def test_cancel_press_drops_a_pending_pause_key_resume(self):
+    # the app holds no pending MAIN-engage pairing (opendbc does); its own pending state is the pause-key resume, which a later plain cancel clears
+    helper = make_helper()
+    helper.main_button.update_resume_request(cs(60, [(ButtonType.resumeCruise, True)]))
+    helper.main_button.update_resume_request(cs(60, [(ButtonType.resumeCruise, False)]))
+    assert helper.main_button.resume_requested
+    helper.main_button.update_resume_request(cs(60, [(ButtonType.cancel, True)]))
+    assert not helper.main_button.resume_requested
+    engage(helper, 60, ButtonType.mainCruise)
+    assert helper.v_cruise_kph == 60
+
 
 class Drive:
   """card -> selfdrived -> card for the Genesis buttons: buttonEnable / buttonCancel / resumeBlocked events, the state machine, then the

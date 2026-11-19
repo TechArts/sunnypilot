@@ -50,7 +50,7 @@ class MainButtonCruise:
       if b.type == ButtonType.resumeCruise:
         if not b.pressed:
           self.resume_requested = True
-      elif b.type in ENGAGE_BUTTONS:
+      elif b.type in (*ENGAGE_BUTTONS, ButtonType.cancel):
         self.resume_requested = False
 
   def initial_speed(self, CS: car.CarState, v_cruise_kph_last: float, initialized: bool, is_metric: bool) -> float | None:
