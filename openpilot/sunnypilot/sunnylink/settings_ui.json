@@ -2238,6 +2238,113 @@
               "equals": true
             }
           ]
+        },
+        {
+          "key": "HyundaiSteerFeel",
+          "widget": "multiple_button",
+          "title": "Steer Feel (GV70, experimental)",
+          "description": "How much openpilot's steering yields when you push the wheel on the 2026 GV70. Generic is the default; Halfway and Stock apply above 6 m/s; Stock (all speeds) also applies when slow.",
+          "options": [
+            {
+              "value": 0,
+              "label": "Generic"
+            },
+            {
+              "value": 1,
+              "label": "Halfway"
+            },
+            {
+              "value": 2,
+              "label": "Stock"
+            },
+            {
+              "value": 3,
+              "label": "Stock (all speeds)"
+            }
+          ],
+          "enablement": [
+            {
+              "type": "offroad_only"
+            }
+          ]
+        },
+        {
+          "key": "HyundaiCurveHold",
+          "widget": "multiple_button",
+          "title": "Curve Hold (GV70, experimental)",
+          "description": "In a curve, pushing the wheel along the turn no longer pauses steering, only pulling against it does, and the steering gain keeps a floor so openpilot holds the curve. Needs Steer Feel on Stock. Off keeps the current behavior.",
+          "options": [
+            {
+              "value": 0,
+              "label": "Off"
+            },
+            {
+              "value": 1,
+              "label": "On"
+            }
+          ],
+          "enablement": [
+            {
+              "type": "offroad_only"
+            }
+          ]
+        },
+        {
+          "key": "HyundaiTakeoverTorque",
+          "widget": "option",
+          "title": "Takeover Torque (GV70)",
+          "description": "Steering pauses (no resistance, grey icon) when you pull the wheel with at least this torque. 0 turns the takeover pause off. Default 150.",
+          "min": 0,
+          "max": 500,
+          "step": 10,
+          "enablement": [
+            {
+              "type": "offroad_only"
+            }
+          ]
+        },
+        {
+          "key": "HyundaiTakeoverReleaseTorque",
+          "widget": "option",
+          "title": "Takeover Release Torque (GV70)",
+          "description": "Steering resumes once your torque on the wheel stays below this value for the hold time. Default 100.",
+          "min": 0,
+          "max": 500,
+          "step": 10,
+          "enablement": [
+            {
+              "type": "offroad_only"
+            }
+          ]
+        },
+        {
+          "key": "HyundaiTakeoverHold",
+          "widget": "option",
+          "title": "Takeover Hold (GV70)",
+          "description": "How long the wheel must stay below the release torque before steering resumes after you took over. Default 500.",
+          "min": 0,
+          "max": 2000,
+          "step": 50,
+          "unit": "ms",
+          "enablement": [
+            {
+              "type": "offroad_only"
+            }
+          ]
+        },
+        {
+          "key": "HyundaiResumeAngleRate",
+          "widget": "option",
+          "title": "Resume Angle Rate (GV70)",
+          "description": "Maximum steering angle step per frame while steering resumes after a takeover, in tenths of a degree. Default 10 (1.0 deg per frame).",
+          "min": 1,
+          "max": 50,
+          "step": 1,
+          "enablement": [
+            {
+              "type": "offroad_only"
+            }
+          ]
         }
       ]
     },
