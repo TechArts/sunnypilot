@@ -4,6 +4,7 @@ import numpy as np
 from opendbc.car.structs import car
 from openpilot.common.constants import CV
 from openpilot.sunnypilot.selfdrive.car.cruise_ext import VCruiseHelperSP
+from openpilot.sunnypilot.selfdrive.car.main_button_engage import MainButtonCruise
 
 
 # WARNING: this value was determined based on the model's training distribution,
@@ -35,6 +36,7 @@ class VCruiseHelper(VCruiseHelperSP):
     self.v_cruise_kph = V_CRUISE_UNSET
     self.v_cruise_cluster_kph = V_CRUISE_UNSET
     self.v_cruise_kph_last = 0
+    self.main_button = MainButtonCruise(CP, CP_SP)
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
 
@@ -48,6 +50,7 @@ class VCruiseHelper(VCruiseHelperSP):
     self.get_minimum_set_speed(is_metric)
 
     _enabled = self.update_enabled_state(CS, enabled)
+    self.main_button.update_resume_request(CS)
 
     if CS.cruiseState.available:
       if not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled):
@@ -137,12 +140,15 @@ class VCruiseHelper(VCruiseHelperSP):
         self.button_timers[b.type.raw] = 1 if b.pressed else 0
         self.button_change_states[b.type.raw] = {"standstill": CS.cruiseState.standstill, "enabled": enabled}
 
-  def initialize_v_cruise(self, CS, initial_speed: int) -> None:
+  def initialize_v_cruise(self, CS, initial_speed: int, is_metric: bool = True) -> None:
     # initializing is handled by the PCM
     if self.CP.pcmCruise:
       return
 
-    if any(b.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for b in CS.buttonEvents) and self.v_cruise_initialized:
+    main_button_speed = self.main_button.initial_speed(CS, self.v_cruise_kph_last, self.v_cruise_initialized, is_metric)
+    if main_button_speed is not None:
+      self.v_cruise_kph = main_button_speed
+    elif any(b.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for b in CS.buttonEvents) and self.v_cruise_initialized:
       self.v_cruise_kph = self.v_cruise_kph_last
     else:
       self.v_cruise_kph = int(round(np.clip(max(CS.vEgo * CV.MS_TO_KPH, initial_speed), V_CRUISE_INITIAL, V_CRUISE_MAX)))
