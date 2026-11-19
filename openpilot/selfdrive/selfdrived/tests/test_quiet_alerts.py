@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from openpilot.cereal import log
 from opendbc.car.structs import car
 from openpilot.common.test import OpenpilotTestCase
@@ -15,7 +17,13 @@ class TestQuietAlerts(OpenpilotTestCase):
     assert alert.visual_alert == VisualAlert.none
     assert alert.alert_text_1 == "Steering Assist Temporarily Unavailable"
 
+  def disengage_alert(self, brake):
+    callback = EVENTS[EventName.pedalPressed][ET.USER_DISABLE]
+    return callback(None, SimpleNamespace(brakePressed=brake), None, True, 0, None)
+
   def test_brake_disengage_has_no_chime_but_still_disengages(self):
-    events = EVENTS[EventName.pedalPressed]
-    assert events[ET.USER_DISABLE].audible_alert == AudibleAlert.none
-    assert ET.NO_ENTRY in events
+    assert self.disengage_alert(brake=True).audible_alert == AudibleAlert.none
+    assert ET.NO_ENTRY in EVENTS[EventName.pedalPressed]
+
+  def test_accelerator_or_regen_disengage_keeps_the_chime(self):
+    assert self.disengage_alert(brake=False).audible_alert == AudibleAlert.disengage
