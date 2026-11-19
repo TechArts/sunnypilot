@@ -23,7 +23,7 @@ class PauseResumeKey:
   that starts while engaged stays a cancel. Mirrors the panda (hyundai_common_cruise_buttons_check), which also blocks it on a held brake.
 
   The resume lives for one uninterrupted hold, like the panda's: a brake press (also released again before the key), a main change (off, or off and
-  on again) or a CAN/panda fault (panda_fault, CAN invalid) while the key is down cancels it; the release is then a plain
+  on again) or a panda fault (panda_fault: rx checks invalid, heartbeat lost = safety reset) while the key is down cancels it; the release is then a plain
   cancel and the driver has to start a new press."""
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
     self.active = main_button_engage(CP, CP_SP)
@@ -34,7 +34,7 @@ class PauseResumeKey:
     if not self.active:
       return
     available = CS.cruiseState.available
-    if self.resume and (CS.brakePressed or fault or not CS.canValid or CS.canTimeout or available != self.main_prev):
+    if self.resume and (CS.brakePressed or fault or available != self.main_prev):
       self.resume = False
     self.main_prev = available
 
