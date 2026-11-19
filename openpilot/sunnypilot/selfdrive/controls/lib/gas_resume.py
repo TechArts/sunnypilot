@@ -10,14 +10,15 @@ GAS_RESUME_MAX_DECEL = -0.5  # m/s^2
 
 
 class GasResume:
-  """After the driver releases the gas above the set speed: no braking for GAS_RESUME_HOLD, then decel limited to GAS_RESUME_MAX_DECEL for
-  GAS_RESUME_DECEL_TIME, so the car coasts down instead of snapping back to the set speed. Not with a lead and not when slowing for a stop."""
+  """After the driver releases the gas above the set speed: the cruise-speed accel candidate is raised to 0 for GAS_RESUME_HOLD, then limited to
+  GAS_RESUME_MAX_DECEL for GAS_RESUME_DECEL_TIME, so the car coasts down instead of snapping back to the set speed. Only that candidate is
+  eased: the planner still takes the minimum with the MPC (lead) and model candidates, so their braking is never replaced."""
   def __init__(self, dt: float) -> None:
     self.dt = dt
     self.since_gas = 1e3  # s
 
-  def update(self, gas_pressed: bool, v_ego: float, v_cruise: float, has_lead: bool, slowing_for_stop: bool, a_target: float) -> float:
+  def update(self, gas_pressed: bool, v_ego: float, v_cruise: float, a_cruise: float, suppress: bool = False) -> float:
     self.since_gas = 0.0 if gas_pressed else self.since_gas + self.dt
-    if v_ego > v_cruise and self.since_gas < GAS_RESUME_HOLD + GAS_RESUME_DECEL_TIME and not (has_lead or slowing_for_stop):
-      return max(a_target, 0.0 if self.since_gas < GAS_RESUME_HOLD else GAS_RESUME_MAX_DECEL)
-    return a_target
+    if v_ego > v_cruise and self.since_gas < GAS_RESUME_HOLD + GAS_RESUME_DECEL_TIME and not suppress:
+      return max(a_cruise, 0.0 if self.since_gas < GAS_RESUME_HOLD else GAS_RESUME_MAX_DECEL)
+    return a_cruise

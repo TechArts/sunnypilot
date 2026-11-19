@@ -4,10 +4,10 @@ from openpilot.sunnypilot.selfdrive.controls.lib.gas_resume import GasResume, GA
 DT = 0.05
 
 
-def run(g, seconds, gas=False, v_ego=30., v_cruise=25., lead=False, stop=False, a_target=-2.0):
-  out = a_target
+def run(g, seconds, gas=False, v_ego=30., v_cruise=25., suppress=False, a_cruise=-2.0):
+  out = a_cruise
   for _ in range(round(seconds / DT)):
-    out = g.update(gas, v_ego, v_cruise, lead, stop, a_target)
+    out = g.update(gas, v_ego, v_cruise, a_cruise, suppress)
   return out
 
 
@@ -28,18 +28,26 @@ class TestGasResume(OpenpilotTestCase):
     run(g, 1., gas=True, v_ego=20.)
     assert run(g, 0.1, v_ego=20.) == -2.0
 
-  def test_lead_or_stop_is_untouched(self):
-    for kw in ({"lead": True}, {"stop": True}):
-      g = GasResume(DT)
-      run(g, 1., gas=True, **kw)
-      assert run(g, 0.1, **kw) == -2.0, kw
-
-  def test_a_target_above_the_limit_is_kept(self):
+  def test_suppressed_is_untouched(self):
     g = GasResume(DT)
-    run(g, 1., gas=True, a_target=0.8)
-    assert run(g, 1., a_target=0.8) == 0.8
-    assert run(g, 1., a_target=-0.2) == -0.2
+    run(g, 1., gas=True, suppress=True)
+    assert run(g, 0.1, suppress=True) == -2.0
+
+  def test_a_cruise_above_the_limit_is_kept(self):
+    g = GasResume(DT)
+    run(g, 1., gas=True, a_cruise=0.8)
+    assert run(g, 1., a_cruise=0.8) == 0.8
+    assert run(g, 1., a_cruise=-0.2) == -0.2
 
   def test_never_pressed_gas_is_untouched(self):
     g = GasResume(DT)
-    assert run(g, 3., a_target=-1.5) == -1.5
+    assert run(g, 3., a_cruise=-1.5) == -1.5
+
+  def test_mpc_and_model_braking_still_win_the_planner_min(self):
+    # the planner takes min(mpc, eased cruise, model): during the easing window a lead / model brake request is not replaced by the eased 0
+    g = GasResume(DT)
+    run(g, 1., gas=True)
+    cruise = run(g, 0.1, a_cruise=-0.4)
+    assert cruise == 0.0
+    for mpc, model in ((-1.5, 0.3), (0.2, -2.0), (-0.8, -0.9)):
+      assert min(mpc, cruise, model) == min(mpc, model)

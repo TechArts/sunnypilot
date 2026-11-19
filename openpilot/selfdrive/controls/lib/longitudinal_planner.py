@@ -113,17 +113,16 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     output_a_target_e2e = self.accel_boost.update(sm, output_a_target_e2e, output_a_target_mpc, self.a_cruise)
 
+    # after a gas override above the set speed: only the cruise-speed candidate is eased, MPC and model braking still win the min below
+    cruise_a_target = self.gas_resume.update(sm['carState'].gasPressed, v_ego, v_cruise, self.a_cruise, sm['controlsState'].forceDecel)
+
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
-                  (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop),
+                  (cruise_a_target, LongitudinalPlanSource.cruise, cruise_should_stop),
                   (output_a_target_e2e, LongitudinalPlanSource.e2e, output_should_stop_e2e)]
 
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
-
-    # after a gas override above the set speed: coast down instead of snapping back to it (not with a lead, not slowing for a stop)
-    self.output_a_target = self.gas_resume.update(sm['carState'].gasPressed, v_ego, v_cruise, sm['radarState'].leadOne.present,
-                                                  sm['controlsState'].forceDecel or self.output_should_stop, self.output_a_target)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 
