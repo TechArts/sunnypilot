@@ -15,7 +15,8 @@ class Plant:
   messaging_initialized = False
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
-               enabled=True, only_lead2=False, only_radar=False, personality=0, force_decel=False):
+               enabled=True, only_lead2=False, only_radar=False, personality=0, force_decel=False,
+               actuator_delivery=1.0, actuator_lag=0.0):
     self.rate = 1. / DT_MDL
 
     if not Plant.messaging_initialized:
@@ -41,6 +42,10 @@ class Plant:
     self.only_radar = only_radar
     self.personality = personality
     self.force_decel = force_decel
+    # optional actuator model: the car delivers `actuator_delivery` x the requested decel (accel requests pass
+    # through unchanged), then a first-order lag with time constant `actuator_lag` s. Defaults = ideal car.
+    self.actuator_delivery = actuator_delivery
+    self.actuator_lag = actuator_lag
 
     self.rk = Ratekeeper(self.rate, print_delay_threshold=100.0)
     self.ts = 1. / self.rate
@@ -137,9 +142,14 @@ class Plant:
           'liveMapDataSP': live_map_data_sp.liveMapDataSP,
           'gpsLocation': gps_data.gpsLocation}
     self.planner.update(sm)
-    self.acceleration = self.planner.output_a_target
+    self.requested_acceleration = self.planner.output_a_target
     if self.planner.output_should_stop:
-      self.acceleration = min(-0.5, self.acceleration)
+      self.requested_acceleration = min(-0.5, self.requested_acceleration)
+    if self.actuator_delivery == 1.0 and self.actuator_lag == 0.0:
+      self.acceleration = self.requested_acceleration
+    else:
+      a_target = self.requested_acceleration * (self.actuator_delivery if self.requested_acceleration < 0 else 1.0)
+      self.acceleration += (a_target - self.acceleration) * self.ts / (self.actuator_lag + self.ts)
     self.speed = self.speed + self.acceleration * self.ts
     self.should_stop = self.planner.output_should_stop
     fcw = self.planner.fcw
@@ -176,6 +186,8 @@ class Plant:
       "should_stop": self.should_stop,
       "distance_lead": self.distance_lead,
       "fcw": fcw,
+      "requested_acceleration": self.requested_acceleration,
+      "v_planner": float(self.planner.v_desired_filter.x),
     }
 
 # simple engage in standalone mode
