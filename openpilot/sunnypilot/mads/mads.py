@@ -8,7 +8,7 @@ See the LICENSE.md file in the root directory for more details.
 from openpilot.cereal import log, custom
 
 from opendbc.car import structs
-from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, HyundaiFlags
 from openpilot.common.params import Params
 from openpilot.sunnypilot.mads.helpers import MadsSteeringModeOnBrake, read_steering_mode_param, MADS_NO_ACC_MAIN_BUTTON
 from openpilot.sunnypilot.selfdrive.car.main_button_engage import main_button_engage
@@ -23,6 +23,12 @@ SafetyModel = structs.CarParams.SafetyModel
 
 SET_SPEED_BUTTONS = (ButtonType.accelCruise, ButtonType.resumeCruise, ButtonType.decelCruise, ButtonType.setCruise)
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
+# The GV70's CCNC camera (routes 6b/6c) toggles its own LFA on the release of an LFA press and ignores long presses: a 1.88 s hold
+# toggled it, 2.10–3.21 s holds did not. MADS acting on the press-down of every press put it and the car's LFA out of step after a
+# long press, so on this car MADS acts on the release of a press shorter than this (the observed boundary; holds within ~0.1 s of
+# it are not covered by the logs) and ignores longer ones. MADS runs every selfdrived cycle (100 Hz). Other CCNC cars are not
+# observed, so they keep the press-down.
+LKAS_LONG_PRESS_FRAMES = 200
 
 
 class ModularAssistiveDrivingSystem:
@@ -51,6 +57,11 @@ class ModularAssistiveDrivingSystem:
 
     if self.CP.brand in MADS_NO_ACC_MAIN_BUTTON:
       self.no_main_cruise = True
+
+    # LFA press timing (see LKAS_LONG_PRESS_FRAMES): only observed on the GV70
+    self.lkas_on_release = self.CP.carFingerprint == HYUNDAI_CAR.GENESIS_GV70_2ND_GEN
+    self.lkas_press_frame: int | None = None
+    self.frame = 0
 
     # main button is only the cruise engage/disengage button (panda: mads_main_off_keeps_lateral): main off ends cruise, never steering
     self.main_off_keeps_lateral = main_button_engage(self.CP, self.CP_SP)
@@ -175,7 +186,7 @@ class ModularAssistiveDrivingSystem:
       if be.type == ButtonType.cancel:
         if not self.selfdrive.enabled and self.selfdrive.enabled_prev:
           self.events_sp.add(EventNameSP.manualLongitudinalRequired)
-      if be.type == ButtonType.lkas and be.pressed and (CS.cruiseState.available or self.allow_always):
+      if be.type == ButtonType.lkas and self.lkas_toggle(be) and (CS.cruiseState.available or self.allow_always):
         if self.enabled:
           if self.selfdrive.enabled:
             self.events_sp.add(EventNameSP.manualSteeringRequired)
@@ -211,10 +222,21 @@ class ModularAssistiveDrivingSystem:
     self.events.remove(EventName.pedalPressed)
     self.events.remove(EventName.wrongCruiseMode)
 
+  def lkas_toggle(self, be: structs.CarState.ButtonEvent) -> bool:
+    """True when this LFA button event toggles MADS: the press-down, or on CCNC cameras the release of a short press."""
+    if not self.lkas_on_release:
+      return bool(be.pressed)
+    if be.pressed:
+      self.lkas_press_frame = self.frame
+      return False
+    start, self.lkas_press_frame = self.lkas_press_frame, None
+    return start is not None and self.frame - start < LKAS_LONG_PRESS_FRAMES
+
   def update(self, CS: structs.CarState):
     if not self.enabled_toggle:
       return
 
+    self.frame += 1
     self.data_sample()
 
     self.update_events(CS)
