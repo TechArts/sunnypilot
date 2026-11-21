@@ -146,6 +146,11 @@ class SelfdriveD:
       max(log.LongitudinalPersonality.schema.enumerants.values()),
       self.params
     )
+    # the last LongitudinalPersonality value this process wrote or adopted: params_thread only adopts a different stored value (a change
+    # from the UI), under a lock shared with the distance-button write. Assigning every read let a read taken just before a button write
+    # overwrite the new value with the old one (GV70 route 6b: 1 -> 0 -> 1 -> 0 within 0.1-0.3 s on 3 of 4 presses).
+    self.personality_param = self.personality
+    self.personality_lock = threading.Lock()
     self.recalibrating_seen = False
     self.dm_lockout_set = False
     self.dm_uncertain_alerted = False
@@ -517,8 +522,10 @@ class SelfdriveD:
     # Decrement personality on distance button press
     if self.CP.openpilotLongitudinalControl:
       if any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents):
-        self.personality = (self.personality - 1) % 3
-        self.params.put('LongitudinalPersonality', self.personality)
+        with self.personality_lock:
+          self.personality = (self.personality - 1) % 3
+          self.params.put('LongitudinalPersonality', self.personality)
+          self.personality_param = self.personality
         self.events.add(EventName.personalityChanged)
 
     self.icbm.run(CS, self.sm['carControl'], self.sm['longitudinalPlanSP'], self.is_metric)
@@ -662,7 +669,10 @@ class SelfdriveD:
       self.is_metric = self.params.get_bool("IsMetric")
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
-      self.personality = self.params.get("LongitudinalPersonality", return_default=True)
+      with self.personality_lock:
+        personality = self.params.get("LongitudinalPersonality", return_default=True)
+        if personality != self.personality_param:
+          self.personality = self.personality_param = personality
 
       self.mads.read_params()
       time.sleep(0.1)
