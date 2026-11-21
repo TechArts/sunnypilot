@@ -13,6 +13,7 @@ from openpilot.selfdrive.controls.lib.accel_boost import AccelBoost
 from openpilot.sunnypilot.selfdrive.controls.lib.accel_boost import AccelBoostSP
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.red_light_alert import RedLightAlertHelper
+from openpilot.sunnypilot.selfdrive.controls.lib.stop_cue import StopCueHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
@@ -33,6 +34,7 @@ class LongitudinalPlannerSP:
     self.source = LongitudinalPlanSource.cruise
     self.e2e_alerts_helper = E2EAlertsHelper()
     self.red_light_alert_helper = RedLightAlertHelper()
+    self.stop_cue_helper = StopCueHelper(CP.openpilotLongitudinalControl)
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
@@ -76,6 +78,7 @@ class LongitudinalPlannerSP:
     self.events_sp.clear()
     self.e2e_alerts_helper.update(sm, self.events_sp)
     self.red_light_alert_helper.update(sm, self.events_sp)
+    self.stop_cue_helper.update(sm, self.events_sp)
 
   def publish_longitudinal_plan_sp(self, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
     plan_sp_send = messaging.new_message('longitudinalPlanSP')

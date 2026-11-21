@@ -249,6 +249,22 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
+  EventNameSP.stopSignAlert: {
+    ET.PERMANENT: Alert(
+      "Stop sign ahead",
+      "",
+      AlertStatus.userPrompt, AlertSize.small,
+      Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
+  EventNameSP.brakeNowAlert: {
+    ET.PERMANENT: Alert(
+      "BRAKE!",
+      "Stop ahead",
+      AlertStatus.critical, AlertSize.full,
+      Priority.HIGHEST, VisualAlert.none, AudibleAlert.warningImmediate, 2.),
+  },
+
   EventNameSP.laneChangeRoadEdge: {
     ET.WARNING: Alert(
       "Lane Change Unavailable: Road Edge",

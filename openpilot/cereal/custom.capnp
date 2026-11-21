@@ -362,6 +362,8 @@ struct OnroadEventSP @0xda96579883444c35 {
     laneChangeRoadEdge @24;
     bigModelReady @25;
     redLightAlert @26;
+    stopSignAlert @27;
+    brakeNowAlert @28;
   }
 }
 
@@ -466,6 +468,7 @@ struct BackupManagerSP @0xf98d843bfd7004a3 {
 
 struct CarStateSP @0xb86e6369214c01c8 {
   speedLimit @0 :Float32;
+  cameraStopSign @1 :Bool;  # Hyundai CAN-FD CCNC camera flags a stop sign ahead (CCNC_0x162 SIGNS == 8)
 }
 
 struct LiveMapDataSP @0xf416ec09499d9d19 {
