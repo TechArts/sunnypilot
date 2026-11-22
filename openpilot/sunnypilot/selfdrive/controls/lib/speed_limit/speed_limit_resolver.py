@@ -69,6 +69,7 @@ class SpeedLimitResolver:
     self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
 
     self.speed_limit = 0.
+    self.distance = 0.  # read by the over-speed alert on the planner's first cycle, before the first update()
     self.speed_limit_last = 0.
     self.speed_limit_final = 0.
     self.speed_limit_final_last = 0.

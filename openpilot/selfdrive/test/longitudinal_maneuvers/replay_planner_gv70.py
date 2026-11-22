@@ -128,12 +128,13 @@ def extract_window(route, t_start, t_end):
 
 
 class FakeSM:
-  """Just enough of SubMaster for the planner: item access, updated/valid/logMonoTime, all_checks."""
+  """Just enough of SubMaster for the planner: item access, updated/valid/alive/logMonoTime, all_checks."""
   def __init__(self, msgs, mono):
     self.msgs = msgs
     self.logMonoTime = mono
     self.updated = collections.defaultdict(lambda: True)
     self.valid = collections.defaultdict(lambda: True)
+    self.alive = collections.defaultdict(lambda: True)
     self.frame = 0
 
   def __getitem__(self, k):
