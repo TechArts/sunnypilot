@@ -14,12 +14,18 @@ from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 # Audible over-speed alert: one chime when the car is faster than the resolved speed limit plus a margin.
 # Independent of cruise state; alert only.
 OVER_SPEED_HOLD_TIME = 2.0  # s, the car must stay over limit + margin this long before the chime
+LIMIT_CHANGE_EPS = 0.05  # m/s, a different limit
 OVER_SPEED_REARM_CLEAR_TIME = 5.0  # s, it must stay at or below limit + margin this long to re-arm
 
 
 def over_speed_margin_ms(margin: int, is_metric: bool) -> float:
   """Param value as the driver sees it (mph, or km/h when the display is metric; 0 = off) in m/s."""
   return margin * (CV.KPH_TO_MS if is_metric else CV.MPH_TO_MS)
+
+
+def current_speed_limit(speed_limit: float, distance: float) -> float:
+  """The limit that applies now. The resolver's anticipatory limit (an upcoming, lower one it adapts to) carries a distance ahead: not yet in force."""
+  return speed_limit if distance <= 0. else 0.
 
 
 def over_speed(v_ego: float, speed_limit: float, margin_ms: float) -> bool:
@@ -39,12 +45,18 @@ class OverSpeedAlert:
     self.fired = False
     self.hold_timer = 0
     self.clear_timer = 0
+    self.limit = 0.
 
   def step(self, v_ego: float, speed_limit: float, margin: int, is_metric: bool) -> bool:
     """Advance one frame (margin 0 = off). Returns True on the frame the alert fires."""
     if margin <= 0:
       self.reset()
       return False
+
+    if speed_limit <= 0. or abs(speed_limit - self.limit) > LIMIT_CHANGE_EPS:
+      # the limit was lost or changed (a new road): start over, hold and re-arm latch included
+      self.reset()
+      self.limit = max(speed_limit, 0.)
 
     over = over_speed(v_ego, speed_limit, over_speed_margin_ms(margin, is_metric))
     if not self.fired:
@@ -75,11 +87,11 @@ class OverSpeedAlertHelper:
     self.margin = int(self._params.get("SpeedLimitOverSpeedAlert", return_default=True))
     self.is_metric = self._params.get_bool("IsMetric")
 
-  def update(self, sm: messaging.SubMaster, speed_limit: float, events_sp: EventsSP) -> None:
+  def update(self, sm: messaging.SubMaster, speed_limit: float, distance: float, events_sp: EventsSP) -> None:
     if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
       self._read_params()
     self.frame += 1
 
-    self.over_speed_alert = self.alert.step(sm['carState'].vEgo, speed_limit, self.margin, self.is_metric)
+    self.over_speed_alert = self.alert.step(sm['carState'].vEgo, current_speed_limit(speed_limit, distance), self.margin, self.is_metric)
     if self.over_speed_alert:
       events_sp.add(custom.OnroadEventSP.EventName.overSpeedAlert)

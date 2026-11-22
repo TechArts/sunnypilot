@@ -144,6 +144,7 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
     sm_mock = mocker.MagicMock()
     sm_mock['gpsLocation'].unixTimestampMillis = (time.monotonic() - 2 * LIMIT_MAX_MAP_DATA_AGE) * 1e3
     sm_mock['carStateSP'].navSpeedLimit = 0.
+    sm_mock.alive = {'carStateSP': True}
     resolver._get_from_map_data(sm_mock)
     assert resolver.limit_solutions[SpeedLimitSource.map] == 0.
     assert resolver.distance_solutions[SpeedLimitSource.map] == 0.
@@ -151,6 +152,7 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
   def _nav_sm(self, mocker, nav, map_valid=True):
     sm_mock = setup_sm_mock(mocker)
     sm_mock['carStateSP'].navSpeedLimit = nav
+    sm_mock.alive = {'carStateSP': True}
     sm_mock['liveMapDataSP'].speedLimitValid = map_valid
     return sm_mock
 
@@ -194,6 +196,16 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
     sm_mock = self._nav_sm(mocker, 15.5, map_valid=False)
     resolver.update(15.5, sm_mock)
     assert resolver.speed_limit == 15.5 and resolver.source == SpeedLimitSource.map
+
+  @parameterized.expand([(Policy.map_data_only,), (Policy.map_data_priority,), (Policy.combined,)], names=["policy"])
+  def test_nav_limit_ignored_when_car_state_sp_not_alive(self, resolver_class, policy, mocker):
+    resolver = resolver_class()
+    resolver.policy = policy
+    sm_mock = self._nav_sm(mocker, 15.5, map_valid=False)
+    sm_mock.alive = {'carStateSP': False}
+    resolver.update(15.5, sm_mock)
+    assert resolver.limit_solutions[SpeedLimitSource.map] == 0.
+    assert resolver.source != SpeedLimitSource.map or resolver.speed_limit != 15.5
 
   def test_no_nav_limit_no_change(self, resolver_class, mocker):
     resolver = resolver_class()

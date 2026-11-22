@@ -81,7 +81,7 @@ class LongitudinalPlannerSP:
     self.e2e_alerts_helper.update(sm, self.events_sp)
     self.red_light_alert_helper.update(sm, self.events_sp)
     self.stop_cue_helper.update(sm, self.events_sp)
-    self.over_speed_alert_helper.update(sm, self.resolver.speed_limit, self.events_sp)
+    self.over_speed_alert_helper.update(sm, self.resolver.speed_limit, self.resolver.distance, self.events_sp)
 
   def publish_longitudinal_plan_sp(self, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
     plan_sp_send = messaging.new_message('longitudinalPlanSP')

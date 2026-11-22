@@ -120,7 +120,8 @@ class SpeedLimitResolver:
     self._process_map_data(sm)
 
     # the car's navigation limit stands in for the map only when the map has no valid limit (OSM wins when valid)
-    nav_speed_limit = sm['carStateSP'].navSpeedLimit
+    # (only while carStateSP is alive: a frozen producer must not keep a stale limit)
+    nav_speed_limit = sm['carStateSP'].navSpeedLimit if sm.alive['carStateSP'] else 0.
     if self.limit_solutions[SpeedLimitSource.map] <= 0. and nav_speed_limit > 0.:
       self.limit_solutions[SpeedLimitSource.map] = nav_speed_limit
       self.distance_solutions[SpeedLimitSource.map] = 0.
