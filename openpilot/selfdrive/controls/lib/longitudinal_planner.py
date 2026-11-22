@@ -3,6 +3,7 @@ import numpy as np
 
 import openpilot.cereal.messaging as messaging
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
@@ -62,12 +63,16 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
 
+  def _soft_stop_fix(self) -> bool:
+    # calibrated on the GV70 (decel delivery 0.88-0.98, lag 0.15-0.6 s from its logs); other cars keep upstream behaviour
+    return self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == HYUNDAI_CAR.GENESIS_GV70_2ND_GEN
+
   def _bound_v_desired(self, v_ego):
-    if self.CP.openpilotLongitudinalControl and v_ego < V_DESIRED_BOUND_SPEED:
+    if self._soft_stop_fix() and v_ego < V_DESIRED_BOUND_SPEED:
       self.v_desired_filter.x = max(self.v_desired_filter.x, v_ego - V_DESIRED_BOUND_MARGIN)
 
   def _low_speed_decel_gain(self, v_ego):
-    if not self.CP.openpilotLongitudinalControl:
+    if not self._soft_stop_fix():
       return 1.0
     frac = np.clip((LOW_SPEED_DECEL_SPEED - v_ego) / 1.0, 0.0, 1.0)
     return 1.0 + (LOW_SPEED_DECEL_GAIN - 1.0) * float(frac)

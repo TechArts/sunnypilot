@@ -13,6 +13,7 @@ class TestSoftStop(unittest.TestCase):
       for v0 in (5., 10., 15.):
         with self.subTest(delivery=delivery, lag=lag, v0=v0):
           r = run(v0, delivery, lag)
+          self.assertTrue(r['t1'] == r['t1'], "did not come to a standstill")  # t1 is NaN without a stop
           self.assertGreaterEqual(r['min'], MIN_STOP_GAP)
           self.assertGreaterEqual(r['minreq'], -2.5 if v0 > 5. else -2.0)
           self.assertLessEqual(r['jerk'], 2.0)
