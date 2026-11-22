@@ -23,6 +23,17 @@ J_CRUISE_BP = [0., 10.0, 25., 40.]
 A_CRUISE_MIN = -0.5
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
+# Below this speed the planner's own speed state may not lag the real speed by more than the margin. Under-delivered
+# small decel requests make the car stay faster than the state, so the MPC plans a stop too gently (crawl, short gap).
+# Only with openpilot longitudinal control, where the planner state is not reset to v_ego every step.
+V_DESIRED_BOUND_SPEED = 15.0
+V_DESIRED_BOUND_MARGIN = 0.0
+
+# Low-speed decel feed-forward: the car delivers only part of small decel requests, so scale the published decel
+# target by up to LOW_SPEED_DECEL_GAIN below LOW_SPEED_DECEL_SPEED (full gain one m/s below, linear ramp above).
+LOW_SPEED_DECEL_SPEED = 5.0
+LOW_SPEED_DECEL_GAIN = 1.15
+
 
 def get_cruise_accel(v_cruise, v_ego, a_cruise_prev, dt):
   target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, ACCEL_MAX)
@@ -51,6 +62,16 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
 
+  def _bound_v_desired(self, v_ego):
+    if self.CP.openpilotLongitudinalControl and v_ego < V_DESIRED_BOUND_SPEED:
+      self.v_desired_filter.x = max(self.v_desired_filter.x, v_ego - V_DESIRED_BOUND_MARGIN)
+
+  def _low_speed_decel_gain(self, v_ego):
+    if not self.CP.openpilotLongitudinalControl:
+      return 1.0
+    frac = np.clip((LOW_SPEED_DECEL_SPEED - v_ego) / 1.0, 0.0, 1.0)
+    return 1.0 + (LOW_SPEED_DECEL_GAIN - 1.0) * float(frac)
+
   def update(self, sm):
     LongitudinalPlannerSP.update(self, sm)
 
@@ -75,6 +96,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
+    self._bound_v_desired(v_ego)
 
     # No change cost when user is controlling the speed, or when standstill
     prev_accel_constraint = not (reset_state or sm['carState'].standstill)
@@ -125,6 +147,9 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
+
+    if self.output_a_target < 0.0:
+      self.output_a_target = max(self.output_a_target * self._low_speed_decel_gain(v_ego), ACCEL_MIN)
 
   def publish(self, sm, pm):
     plan_send = messaging.new_message('longitudinalPlan')
