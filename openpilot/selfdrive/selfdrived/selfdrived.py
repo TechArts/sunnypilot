@@ -2,7 +2,6 @@
 import os
 import time
 import threading
-from collections import deque
 
 import openpilot.cereal.messaging as messaging
 
@@ -147,11 +146,12 @@ class SelfdriveD:
       max(log.LongitudinalPersonality.schema.enumerants.values()),
       self.params
     )
-    # LongitudinalPersonality: params_thread adopts a stored value only when the file changed and the new value is not one of this
-    # process's own distance-button writes (Params.put is asynchronous). Assigning every 10 Hz read let a read taken before a button write
-    # landed put the old value back (GV70 route 6b: 1 -> 0 -> 1 -> 0 within 0.1-0.3 s on 3 of 4 presses); UI changes still apply.
-    self.personality_disk = self.personality
-    self.personality_own_writes: deque[int] = deque(maxlen=3)
+    # LongitudinalPersonality has one writer, params_thread: the distance button only changes self.personality and marks it dirty; the
+    # thread persists it with a blocking put and adopts a stored value only when no button change is pending. Writing from the 100 Hz
+    # loop with the asynchronous put while the thread assigned every read let a stale read put the old value back (GV70 route 6b:
+    # 1 -> 0 -> 1 -> 0 within 0.1-0.3 s on 3 of 4 presses). UI changes still apply.
+    self.personality_lock = threading.Lock()
+    self.personality_dirty = False
     self.recalibrating_seen = False
     self.dm_lockout_set = False
     self.dm_uncertain_alerted = False
@@ -523,9 +523,9 @@ class SelfdriveD:
     # Decrement personality on distance button press
     if self.CP.openpilotLongitudinalControl:
       if any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents):
-        self.personality = (self.personality - 1) % 3
-        self.personality_own_writes.append(self.personality)
-        self.params.put('LongitudinalPersonality', self.personality)
+        with self.personality_lock:
+          self.personality = (self.personality - 1) % 3
+          self.personality_dirty = True
         self.events.add(EventName.personalityChanged)
 
     self.icbm.run(CS, self.sm['carControl'], self.sm['longitudinalPlanSP'], self.is_metric)
@@ -669,16 +669,15 @@ class SelfdriveD:
       self.is_metric = self.params.get_bool("IsMetric")
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
-      personality = self.params.get("LongitudinalPersonality", return_default=True)
-      if personality == self.personality:
-        self.personality_own_writes.clear()  # the file caught up with every button write
-      elif personality != self.personality_disk:
-        if personality in self.personality_own_writes:
-          while self.personality_own_writes.popleft() != personality:  # one of our writes landed: retire it and the older ones
-            pass
-        else:
-          self.personality = personality  # a change from outside this process (the UI)
-      self.personality_disk = personality
+      with self.personality_lock:
+        dirty, personality = self.personality_dirty, self.personality
+        self.personality_dirty = False
+      if dirty:
+        self.params.put("LongitudinalPersonality", personality, block=True)
+      stored = self.params.get("LongitudinalPersonality", return_default=True)
+      with self.personality_lock:
+        if not self.personality_dirty and stored != self.personality:
+          self.personality = stored  # a change from outside this process (the UI)
 
       self.mads.read_params()
       time.sleep(0.1)
