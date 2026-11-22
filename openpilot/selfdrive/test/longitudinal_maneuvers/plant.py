@@ -4,7 +4,7 @@ import numpy as np
 
 from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
-from openpilot.common.realtime import Ratekeeper, DT_MDL
+from openpilot.common.realtime import Ratekeeper, DT_MDL, DT_CTRL
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
@@ -16,7 +16,7 @@ class Plant:
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
                enabled=True, only_lead2=False, only_radar=False, personality=0, force_decel=False,
-               actuator_delivery=1.0, actuator_lag=0.0):
+               actuator_delivery=1.0, actuator_lag=0.0, car='honda', use_long_control=False):
     self.rate = 1. / DT_MDL
 
     if not Plant.messaging_initialized:
@@ -46,17 +46,34 @@ class Plant:
     # through unchanged), then a first-order lag with time constant `actuator_lag` s. Defaults = ideal car.
     self.actuator_delivery = actuator_delivery
     self.actuator_lag = actuator_lag
+    # opt-in: run the real LongControl on the planner output (as controlsd does) before the actuator model
+    self.use_long_control = use_long_control
 
     self.rk = Ratekeeper(self.rate, print_delay_threshold=100.0)
     self.ts = 1. / self.rate
     time.sleep(0.1)
     self.sm = messaging.SubMaster(['longitudinalPlan'])
 
-    from opendbc.car.honda.values import CAR
-    from opendbc.car.honda.interface import CarInterface
+    self.car = car
+    if car == 'gv70':
+      from opendbc.car.hyundai.values import CAR
+      from opendbc.car.hyundai.interface import CarInterface
+      model = CAR.GENESIS_GV70_2ND_GEN
+    else:
+      from opendbc.car.honda.values import CAR
+      from opendbc.car.honda.interface import CarInterface
+      model = CAR.HONDA_CIVIC
 
-    CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-    CP_SP = CarInterface.get_non_essential_params_sp(CP, CAR.HONDA_CIVIC)
+    CP = CarInterface.get_non_essential_params(model)
+    CP_SP = CarInterface.get_non_essential_params_sp(CP, model)
+    if car == 'gv70':
+      # not set by the non-essential params; without it the planner resets its speed state every step
+      CP.openpilotLongitudinalControl = True
+    self.CP = CP
+    self.CP_SP = CP_SP
+    if use_long_control:
+      from openpilot.selfdrive.controls.lib.longcontrol import LongControl
+      self.long_control = LongControl(CP, CP_SP)
     self.planner = LongitudinalPlanner(CP, CP_SP, init_v=self.speed)
 
   @property
@@ -129,6 +146,8 @@ class Plant:
     control.controlsState.forceDecel = self.force_decel
     car_state.carState.vEgo = float(self.speed)
     car_state.carState.standstill = bool(self.speed < 0.01)
+    if self.car == 'gv70':
+      car_state.carState.aEgo = float(self.acceleration)
     car_state.carState.vCruise = float(v_cruise * 3.6)
 
     # ******** get controlsState messages for plotting ***
@@ -143,7 +162,17 @@ class Plant:
           'gpsLocation': gps_data.gpsLocation}
     self.planner.update(sm)
     self.requested_acceleration = self.planner.output_a_target
-    if self.planner.output_should_stop:
+    if self.use_long_control:
+      from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
+      CS = messaging.new_message('carState').carState
+      CS.vEgo = float(self.speed)
+      CS.aEgo = float(self.acceleration)
+      CS.standstill = bool(self.speed < 0.01)
+      CS.brakePressed = False
+      for _ in range(round(self.ts / DT_CTRL)):  # controlsd runs at 100 Hz, the planner at 20 Hz
+        self.requested_acceleration = self.long_control.update(True, CS, self.planner.output_a_target,
+                                                               self.planner.output_should_stop, (ACCEL_MIN, ACCEL_MAX))
+    elif self.planner.output_should_stop:
       self.requested_acceleration = min(-0.5, self.requested_acceleration)
     if self.actuator_delivery == 1.0 and self.actuator_lag == 0.0:
       self.acceleration = self.requested_acceleration
