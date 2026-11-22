@@ -34,7 +34,7 @@ def lkas(pressed):
 
 def step(mads, sd, cs):
   mads.update(cs)
-  toggled = sd.events_sp.contains(EventNameSP.lkasEnable) or sd.events_sp.contains(EventNameSP.lkasDisable)
+  toggled = sd.events_sp.has(EventNameSP.lkasEnable) or sd.events_sp.has(EventNameSP.lkasDisable)
   sd.CS_prev = cs
   sd.events.clear()
   sd.events_sp.clear()
@@ -47,12 +47,12 @@ def hold(mads, sd, frames):
 
 
 class TestLkasRelease(OpenpilotTestCase):
-  @parameterized.expand([(10,), (85,), (188,)])  # 0.1 s, 0.85 s and 1.88 s holds: the GV70 camera toggled its LFA on release
+  @parameterized.expand([(10,), (85,), (188,)], names=["frames"])  # 0.1/0.85/1.88 s holds: the GV70 camera toggled its LFA on release
   def test_gv70_short_press_toggles_on_release(self, mocker, frames):
     mads, sd = build(mocker)
     assert hold(mads, sd, frames) == [frames]
 
-  @parameterized.expand([(210,), (321,)])  # 2.10 s and 3.21 s holds: the camera ignored them
+  @parameterized.expand([(210,), (321,)], names=["frames"])  # 2.10 s and 3.21 s holds: the camera ignored them
   def test_gv70_long_press_is_ignored(self, mocker, frames):
     mads, sd = build(mocker)
     assert hold(mads, sd, frames) == []
@@ -79,7 +79,7 @@ class TestLkasRelease(OpenpilotTestCase):
       step(mads, sd, make_car_state())
     assert hold(mads, sd, 15) == [15]
 
-  @parameterized.expand([(10,), (240,)])
+  @parameterized.expand([(10,), (240,)], names=["frames"])
   def test_other_ccnc_cars_keep_press_down(self, mocker, frames):
     mads, sd = build(mocker, fingerprint=CAR.HYUNDAI_IONIQ_5, ccnc=True)
     assert hold(mads, sd, frames) == [0]
