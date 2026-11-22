@@ -86,13 +86,25 @@ class SpeedLimitSettingsLayout(Widget):
       label_callback=self._get_offset_label,
     )
 
+    self._over_speed_alert = option_item_sp(
+      title=lambda: tr("Over Speed Chime"),
+      param="SpeedLimitOverSpeedAlert",
+      min_value=0,
+      max_value=15,
+      value_change_step=5,
+      description=lambda: tr("Plays a chime when driving over the speed limit plus this margin for 2 seconds, with or without cruise control. Off: no chime."),
+      label_callback=self._get_over_speed_label,
+    )
+
     items = [
       self._speed_limit_mode,
       LineSeparatorSP(40),
       self._source_button,
       LineSeparatorSP(40),
       self._speed_limit_offset_type,
-      self._speed_limit_value_offset
+      self._speed_limit_value_offset,
+      LineSeparatorSP(40),
+      self._over_speed_alert,
     ]
     return items
 
@@ -119,6 +131,12 @@ class SpeedLimitSettingsLayout(Widget):
     elif offset_type == int(SpeedLimitOffsetType.fixed):
       return f"{value} {unit}"
     return str(value)
+
+  @staticmethod
+  def _get_over_speed_label(value):
+    if value <= 0:
+      return tr("Off")
+    return f"+{value} {tr('km/h') if ui_state.is_metric else tr('mph')}"
 
   def _update_state(self):
     super()._update_state()

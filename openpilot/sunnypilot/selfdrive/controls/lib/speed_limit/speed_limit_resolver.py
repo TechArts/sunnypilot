@@ -119,6 +119,12 @@ class SpeedLimitResolver:
     self._reset_limit_sources(SpeedLimitSource.map)
     self._process_map_data(sm)
 
+    # the car's navigation limit stands in for the map only when the map has no valid limit (OSM wins when valid)
+    nav_speed_limit = sm['carStateSP'].navSpeedLimit
+    if self.limit_solutions[SpeedLimitSource.map] <= 0. and nav_speed_limit > 0.:
+      self.limit_solutions[SpeedLimitSource.map] = nav_speed_limit
+      self.distance_solutions[SpeedLimitSource.map] = 0.
+
   def _process_map_data(self, sm: messaging.SubMaster) -> None:
     gps_data = sm[self._gps_location_service]
     map_data = sm['liveMapDataSP']

@@ -257,6 +257,14 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
+  EventNameSP.overSpeedAlert: {
+    ET.PERMANENT: Alert(
+      "Over speed limit",
+      "",
+      AlertStatus.userPrompt, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
   EventNameSP.brakeNowAlert: {
     ET.PERMANENT: Alert(
       "BRAKE!",

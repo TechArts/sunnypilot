@@ -924,6 +924,19 @@
                       "value": 0
                     }
                   ]
+                },
+                {
+                  "key": "SpeedLimitOverSpeedAlert",
+                  "widget": "option",
+                  "title": "Over Speed Chime",
+                  "description": "Plays a chime when driving over the speed limit plus this margin for 2 seconds, with or without cruise control. 0 = off.",
+                  "min": 0,
+                  "max": 15,
+                  "step": 5,
+                  "unit": {
+                    "metric": "km/h",
+                    "imperial": "mph"
+                  }
                 }
               ]
             }
