@@ -670,13 +670,15 @@ class SelfdriveD:
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
       personality = self.params.get("LongitudinalPersonality", return_default=True)
-      if personality != self.personality_disk:
-        self.personality_disk = personality
+      if personality == self.personality:
+        self.personality_own_writes.clear()  # the file caught up with every button write
+      elif personality != self.personality_disk:
         if personality in self.personality_own_writes:
-          if personality == self.personality:
-            self.personality_own_writes.clear()
+          while self.personality_own_writes.popleft() != personality:  # one of our writes landed: retire it and the older ones
+            pass
         else:
-          self.personality = personality
+          self.personality = personality  # a change from outside this process (the UI)
+      self.personality_disk = personality
 
       self.mads.read_params()
       time.sleep(0.1)
