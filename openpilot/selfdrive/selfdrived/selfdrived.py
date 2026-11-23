@@ -696,7 +696,9 @@ class SelfdriveD:
 
 
 def main():
-  config_realtime_process(4, Priority.CTRL_HIGH)
+  # GV70: core 4 (card + controlsd + selfdrived, all FIFO 53) runs at ~99.5 % on this car and selfdrived fell under its 90 Hz
+  # lagging bound on long warm drives. Core 7 has modeld (FIFO 54, preempts us; ~8 ms per 50 ms frame) and dmonitoringmodeld (FIFO 5).
+  config_realtime_process(7, Priority.CTRL_HIGH)
   s = SelfdriveD()
   s.run()
 
