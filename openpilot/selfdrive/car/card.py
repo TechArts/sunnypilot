@@ -26,6 +26,7 @@ from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_ca
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
 from openpilot.sunnypilot.selfdrive.car.pause_resume import PauseResumeKey, panda_fault
 from openpilot.sunnypilot.selfdrive.car.genesis_mode import GenesisModeButton
+from openpilot.sunnypilot.selfdrive.car.speed_limit_follow import SpeedLimitFollow
 
 REPLAY = "REPLAY" in os.environ
 
@@ -180,6 +181,7 @@ class Car:
     self.v_cruise_helper = VCruiseHelper(self.CP, self.CP_SP)
     self.pause_resume = PauseResumeKey(self.CP, self.CP_SP)
     self.genesis_mode = GenesisModeButton(self.CP, self.params)
+    self.speed_limit_follow = SpeedLimitFollow(self.CP, self.CP_SP, self.params)
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
@@ -222,6 +224,10 @@ class Car:
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Use CarState w/ buttons from the step selfdrived enables on
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.initial_cruise_speed, self.is_metric)
+    # Genesis: MAIN held from cruise off follows the speed limit (sets the speed over the helper's)
+    self.speed_limit_follow.update(CS, self.sm['carControl'].enabled, self.sm['longitudinalPlanSP'].speedLimit.resolver, self.v_cruise_helper,
+                                   self.is_metric)
+    self.speed_limit_follow.publish(CS_SP)
 
     # TODO: mirror the carState.cruiseState struct?
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)

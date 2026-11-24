@@ -73,6 +73,26 @@ def speed_limit_pre_active_alert(CP: car.CarParams, CS: car.CarState, sm: messag
     Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleLow, .1)
 
 
+def _limit_and_set(CS: car.CarState, sm: messaging.SubMaster, metric: bool) -> tuple[int, int, str]:
+  """The resolver's last limit (m/s) and the set speed (carState.vCruiseCluster, km/h) in the displayed unit."""
+  limit = round(sm['longitudinalPlanSP'].speedLimit.resolver.speedLimitLast * (CV.MS_TO_KPH if metric else CV.MS_TO_MPH))
+  return limit, round(CS.vCruiseCluster * (1. if metric else CV.KPH_TO_MPH)), "km/h" if metric else "mph"
+
+
+def speed_limit_follow_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  limit, set_speed, unit = _limit_and_set(CS, sm, metric)
+  offset = set_speed - limit
+  text = f"Following the speed limit {offset:+d} {unit}" if limit > 0 else "Following the speed limit (none known yet)"
+  return Alert(text, "", AlertStatus.normal, AlertSize.small, Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleHigh, 3.)
+
+
+def speed_limit_school_zone_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int,
+                                  personality) -> Alert:
+  limit, _, unit = _limit_and_set(CS, sm, metric)
+  return Alert(f"School zone {limit} {unit}", "Press SET- to slow down", AlertStatus.userPrompt, AlertSize.mid, Priority.LOW, VisualAlert.none,
+               AudibleAlert.prompt, .2)
+
+
 class EventsSP(EventsBase):
   def __init__(self):
     super().__init__()
@@ -271,6 +291,14 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "Stop ahead",
       AlertStatus.critical, AlertSize.full,
       Priority.HIGHEST, VisualAlert.none, AudibleAlert.warningImmediate, 2.),
+  },
+
+  EventNameSP.speedLimitFollowActive: {
+    ET.WARNING: speed_limit_follow_alert,
+  },
+
+  EventNameSP.speedLimitSchoolZone: {
+    ET.WARNING: speed_limit_school_zone_alert,
   },
 
   EventNameSP.laneChangeRoadEdge: {

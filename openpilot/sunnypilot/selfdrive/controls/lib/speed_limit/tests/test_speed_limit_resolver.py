@@ -7,6 +7,7 @@ See the LICENSE.md file in the root directory for more details.
 import random
 import time
 
+from openpilot.common.constants import CV
 from openpilot.common.parameterized import parameterized
 
 from openpilot.cereal import custom
@@ -214,3 +215,37 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
     resolver.update(15.5, sm_mock)
     assert resolver.speed_limit == 0.
     assert resolver.source == SpeedLimitSource.none
+
+  def _vote_sm(self, mocker, dash, nav, osm, school_sign=False):
+    """GV70 routes, mph: the dash value, the head unit's nav limit, OSM (0 = none)."""
+    sm_mock = setup_sm_mock(mocker)
+    sm_mock['carStateSP'].speedLimit = dash * CV.MPH_TO_MS
+    sm_mock['carStateSP'].navSpeedLimit = nav * CV.MPH_TO_MS
+    sm_mock['carStateSP'].speedLimitSchoolSign = school_sign
+    sm_mock['liveMapDataSP'].speedLimit = osm * CV.MPH_TO_MS
+    sm_mock['liveMapDataSP'].speedLimitValid = osm > 0
+    sm_mock.alive = {'carStateSP': True}
+    return sm_mock
+
+  @parameterized.expand([
+    ("truck_sign_on_the_405", 55, 65, 65, 72, 65, SpeedLimitSource.car),
+    ("nav_on_a_ramp_at_speed", 40, 40, 65, 62, 65, SpeedLimitSource.map),
+    ("osm_wrong_on_ca_138", 65, 65, 55, 67, 65, SpeedLimitSource.car),
+    ("no_car_value", 0, 0, 45, 40, 45, SpeedLimitSource.map),
+  ], names=["case", "dash", "nav", "osm", "v_ego_mph", "expected_mph", "expected_source"])
+  def test_vote(self, resolver_class, case, dash, nav, osm, v_ego_mph, expected_mph, expected_source, mocker):
+    resolver = resolver_class()
+    resolver.policy = Policy.vote
+    sm_mock = self._vote_sm(mocker, dash, nav, osm)
+    resolver.update(v_ego_mph * CV.MPH_TO_MS, sm_mock)
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == expected_mph
+    assert resolver.source == expected_source
+    assert not resolver.school_zone
+
+  def test_vote_ignores_car_when_car_state_sp_not_alive(self, resolver_class, mocker):
+    resolver = resolver_class()
+    resolver.policy = Policy.vote
+    sm_mock = self._vote_sm(mocker, 55, 55, 65)
+    sm_mock.alive = {'carStateSP': False}
+    resolver.update(30 * CV.MPH_TO_MS, sm_mock)
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 65 and resolver.source == SpeedLimitSource.map
