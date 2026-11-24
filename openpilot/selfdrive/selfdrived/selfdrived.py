@@ -54,6 +54,8 @@ MonitoringPolicy = log.DriverMonitoringState.MonitoringPolicy
 TurnDirection = custom.ModelDataV2SP.TurnDirection
 
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
+# the planner cues that stay on in dashcam mode (Genesis mode: the car's own cruise drives): red light ahead, green light / lead departed
+PASSIVE_CUES = (custom.OnroadEventSP.EventName.redLightAlert, custom.OnroadEventSP.EventName.e2eChime)
 
 
 class SelfdriveD:
@@ -244,8 +246,11 @@ class SelfdriveD:
       paired = prime_type is not None and int(prime_type) >= 0
       self.events.add(EventName.userBookmark if paired else EventName.userBookmarkNotPaired)
 
-    # Don't add any more events while in dashcam mode
+    # Don't add any more events while in dashcam mode, except the red-light and green-light / lead-depart cues
     if self.CP.passive:
+      for e in self.sm['longitudinalPlanSP'].events:
+        if e.name.raw in PASSIVE_CUES:
+          self.events_sp.add(e.name.raw)
       return
 
     # Block resume if cruise never previously enabled

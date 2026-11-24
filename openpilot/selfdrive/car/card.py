@@ -25,6 +25,7 @@ from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_cap
 from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_car_specific_params
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
 from openpilot.sunnypilot.selfdrive.car.pause_resume import PauseResumeKey, panda_fault
+from openpilot.sunnypilot.selfdrive.car.genesis_mode import GenesisModeButton
 
 REPLAY = "REPLAY" in os.environ
 
@@ -178,6 +179,7 @@ class Car:
 
     self.v_cruise_helper = VCruiseHelper(self.CP, self.CP_SP)
     self.pause_resume = PauseResumeKey(self.CP, self.CP_SP)
+    self.genesis_mode = GenesisModeButton(self.CP, self.params)
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
@@ -202,6 +204,9 @@ class Car:
 
     # Genesis: the pause key resumes openpilot cruise from standby (before anything reads the button events)
     self.pause_resume.update(CS, self.sm['carControl'].enabled, panda_fault(self.sm['pandaStates']))
+    # Genesis: a long press of the programmable wheel button in Park switches openpilot <-> Genesis mode (dashcam mode, the car's own assists)
+    if self.genesis_mode.update(CS_SP.customButton, CS, self.sm['carControl'].enabled):
+      cloudlog.warning(f"genesis mode button: OpenpilotEnabledToggle -> {self.params.get_bool('OpenpilotEnabledToggle')}, onroad cycle")
 
     can_rcv_valid = len(can_strs) > 0
 
