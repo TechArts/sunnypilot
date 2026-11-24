@@ -291,6 +291,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"RoadNameToggle", {PERSISTENT | BACKUP, BOOL, "0"}},
 
     // Speed Limit
+    {"SpeedLimitFollowOffsetFreeway", {PERSISTENT | BACKUP, INT, "10"}},  // mph or km/h over a limit >= 55 mph / 90 km/h in speed-limit follow
+    {"SpeedLimitFollowOffsetStreet", {PERSISTENT | BACKUP, INT, "5"}},   // over a lower limit
     {"SpeedLimitMode", {PERSISTENT | BACKUP, INT, "1"}},
     {"SpeedLimitOffsetType", {PERSISTENT | BACKUP, INT, "0"}},
     {"SpeedLimitOverSpeedAlert", {PERSISTENT | BACKUP, INT, "0"}},

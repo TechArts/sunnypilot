@@ -14,6 +14,7 @@ class Policy(IntEnumBase):
   car_state_priority = 2
   map_data_priority = 3
   combined = 4
+  vote = 5  # Hyundai CCNC (GV70): nav, camera sign and OSM vote with guards, school zones by time of day (speed_limit/vote.py)
 
 
 class OffsetType(IntEnumBase):

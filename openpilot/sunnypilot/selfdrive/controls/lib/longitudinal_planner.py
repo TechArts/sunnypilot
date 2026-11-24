@@ -39,6 +39,8 @@ class LongitudinalPlannerSP:
     self.over_speed_alert_helper = OverSpeedAlertHelper()
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
+    self._follow_prev = False
+    self._follow_offset_prev = 0
 
     self.output_v_target = 0.
     self.output_a_target = 0.
@@ -82,6 +84,19 @@ class LongitudinalPlannerSP:
     self.red_light_alert_helper.update(sm, self.events_sp)
     self.stop_cue_helper.update(sm, self.events_sp)
     self.over_speed_alert_helper.update(sm, self.resolver.speed_limit, self.resolver.distance, self.events_sp)
+    self.update_speed_limit_follow_events(sm)
+
+  def update_speed_limit_follow_events(self, sm: messaging.SubMaster) -> None:
+    """Speed-limit follow (card, speed_limit_follow.py): an alert when it starts or its offset changes, and while a school-zone limit waits for
+    the driver's SET- tap."""
+    cs_sp = sm['carStateSP']
+    follow = cs_sp.speedLimitFollow and sm['carControl'].enabled
+    offset = round(cs_sp.speedLimitFollowOffset)
+    if follow and (not self._follow_prev or offset != self._follow_offset_prev):
+      self.events_sp.add(custom.OnroadEventSP.EventName.speedLimitFollowActive)
+    if follow and cs_sp.speedLimitSchoolPending:
+      self.events_sp.add(custom.OnroadEventSP.EventName.speedLimitSchoolZone)
+    self._follow_prev, self._follow_offset_prev = follow, offset
 
   def publish_longitudinal_plan_sp(self, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
     plan_sp_send = messaging.new_message('longitudinalPlanSP')
@@ -125,6 +140,7 @@ class LongitudinalPlannerSP:
     resolver.speedLimitOffset = float(self.resolver.speed_limit_offset)
     resolver.distToSpeedLimit = float(self.resolver.distance)
     resolver.source = self.resolver.source
+    resolver.schoolZone = self.resolver.school_zone
     assist = speedLimit.assist
     assist.state = self.sla.state
     assist.enabled = self.sla.is_enabled

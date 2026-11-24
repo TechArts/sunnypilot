@@ -15,6 +15,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD, get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE, LIMIT_ADAPT_ACC
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
+from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.vote import SpeedLimitVote
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
 
@@ -53,6 +54,7 @@ class SpeedLimitResolver:
       Policy.map_data_only: [SpeedLimitSource.map],
       Policy.car_state_priority: [SpeedLimitSource.car, SpeedLimitSource.map],
       Policy.map_data_priority: [SpeedLimitSource.map, SpeedLimitSource.car],
+      Policy.vote: [SpeedLimitSource.car, SpeedLimitSource.map],
       Policy.combined: [SpeedLimitSource.car, SpeedLimitSource.map],
     }
     self.source = SpeedLimitSource.none
@@ -74,6 +76,8 @@ class SpeedLimitResolver:
     self.speed_limit_final = 0.
     self.speed_limit_final_last = 0.
     self.speed_limit_offset = 0.
+    self.school_zone = False
+    self._vote = SpeedLimitVote(DT_MDL)
 
   def update_speed_limit_states(self) -> None:
     self.speed_limit_final = self.speed_limit + self.speed_limit_offset
@@ -175,8 +179,27 @@ class SpeedLimitResolver:
 
     return SpeedLimitSource.none
 
+  def _resolve_by_vote(self, sm: messaging.SubMaster) -> tuple[float, float, custom.LongitudinalPlanSP.SpeedLimit.Source]:
+    """Policy vote: the car's dash value, its nav value and OSM (without the nav stand-in), see speed_limit/vote.py."""
+    self._reset_limit_sources(SpeedLimitSource.map)
+    self._process_map_data(sm)
+    car_sp = sm['carStateSP']
+    alive = sm.alive['carStateSP']
+    dash = car_sp.speedLimit if alive else 0.
+    nav = car_sp.navSpeedLimit if alive else 0.
+    self.limit_solutions[SpeedLimitSource.car] = dash
+    result = self._vote.update(dash, nav, self.limit_solutions[SpeedLimitSource.map], alive and car_sp.speedLimitSchoolSign,
+                               self.v_ego, self.is_metric)
+    self.school_zone = result.school
+    if result.limit <= 0.:
+      return 0., 0., SpeedLimitSource.none
+    return result.limit, 0., SpeedLimitSource.map if result.from_map else SpeedLimitSource.car
+
   def _resolve_limit_sources(self, sm: messaging.SubMaster) -> tuple[float, float, custom.LongitudinalPlanSP.SpeedLimit.Source]:
     """Get limit solutions from each data source"""
+    if Policy(self.policy) == Policy.vote:
+      return self._resolve_by_vote(sm)
+    self.school_zone = False
     self._get_from_car_state(sm)
     self._get_from_map_data(sm)
 

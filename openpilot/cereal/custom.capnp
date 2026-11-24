@@ -275,6 +275,7 @@ struct LongitudinalPlanSP @0xf35cc4560bbf6ec2 {
       speedLimitFinalLast @6 :Float32;
       speedLimitValid @7 :Bool;
       speedLimitLastValid @8 :Bool;
+      schoolZone @9 :Bool;  # Policy vote: the limit is a school zone's conditional limit (weekday school hours only)
     }
 
     struct Assist {
@@ -365,6 +366,8 @@ struct OnroadEventSP @0xda96579883444c35 {
     stopSignAlert @27;
     brakeNowAlert @28;
     overSpeedAlert @29;
+    speedLimitFollowActive @30;
+    speedLimitSchoolZone @31;
   }
 }
 
@@ -472,6 +475,11 @@ struct CarStateSP @0xb86e6369214c01c8 {
   cameraStopSign @1 :Bool;  # Hyundai CAN-FD CCNC camera flags a stop sign ahead (CCNC_0x162 SIGNS == 8)
   navSpeedLimit @2 :Float32;  # Hyundai CAN-FD CCNC car navigation speed limit (HU_Navi_ISLW_PE), m/s, 0 = none
   customButton @3 :Bool;  # Hyundai CAN-FD CCNC programmable steering-wheel button held (SWRC_01 Audio_CustomSw3Sta), false when SWRC_01 is stale
+  speedLimitSchoolSign @4 :Bool;  # Hyundai CAN-FD CCNC camera saw a "School Crossing" sign (FR_CMR_02_100ms ISLA_AddtnlSign == 1)
+  # set by card (openpilot/sunnypilot/selfdrive/car/speed_limit_follow.py), not by the car interface
+  speedLimitFollow @5 :Bool;  # openpilot cruise follows the speed limit (engaged with a long MAIN press)
+  speedLimitFollowOffset @6 :Float32;  # the offset over the limit in use, mph or km/h as displayed
+  speedLimitSchoolPending @7 :Bool;  # a school-zone limit below the set speed waits for the driver's SET- tap
 }
 
 struct LiveMapDataSP @0xf416ec09499d9d19 {
