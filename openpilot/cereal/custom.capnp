@@ -480,6 +480,7 @@ struct CarStateSP @0xb86e6369214c01c8 {
   speedLimitFollow @5 :Bool;  # openpilot cruise follows the speed limit (engaged with a long MAIN press)
   speedLimitFollowOffset @6 :Float32;  # the offset over the limit in use, mph or km/h as displayed
   speedLimitSchoolPending @7 :Bool;  # a school-zone limit below the set speed waits for the driver's SET- tap
+  mainCruiseLong @8 :Bool;  # Hyundai CAN-FD CCNC: the car's long-MAIN bit held (CRUISE_BUTTONS NORMAL_CRUISE_MAIN_BTN); a short MAIN is ADAPTIVE_CRUISE_MAIN_BTN
 }
 
 struct LiveMapDataSP @0xf416ec09499d9d19 {

@@ -224,9 +224,9 @@ class Car:
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Use CarState w/ buttons from the step selfdrived enables on
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.initial_cruise_speed, self.is_metric)
-    # Genesis: MAIN held from cruise off follows the speed limit (sets the speed over the helper's)
-    self.speed_limit_follow.update(CS, self.sm['carControl'].enabled, self.sm['longitudinalPlanSP'].speedLimit.resolver, self.v_cruise_helper,
-                                   self.is_metric)
+    # Genesis: a long MAIN from cruise off follows the speed limit (sets the speed over the helper's)
+    self.speed_limit_follow.update(CS, CS_SP, self.sm['carControl'].enabled, self.sm['longitudinalPlanSP'].speedLimit.resolver,
+                                   self.v_cruise_helper, self.is_metric)
     self.speed_limit_follow.publish(CS_SP)
 
     # TODO: mirror the carState.cruiseState struct?
