@@ -143,7 +143,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     # after a gas override: the cruise-speed candidate coasts down to the set speed, and the MPC (lead) candidate brakes gently unless the lead is
     # urgent (gas_resume.py); the model candidate (stops, lights) is never eased
     cruise_a_target = self.gas_resume.update(sm['carState'].gasPressed, v_ego, v_cruise, self.a_cruise, sm['controlsState'].forceDecel)
-    output_a_target_mpc = self.gas_resume.ease_lead(output_a_target_mpc, sm['radarState'].leadOne, v_ego,
+    output_a_target_mpc = self.gas_resume.ease_lead(output_a_target_mpc, (sm['radarState'].leadOne, sm['radarState'].leadTwo), v_ego,
                                                     get_T_FOLLOW(sm['selfdriveState'].personality), sm['controlsState'].forceDecel)
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),

@@ -20,10 +20,10 @@ import collections
 import numpy as np
 
 XSEG_DIR = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Personal/Notes/Personal/RedLightAlert/tools/analysis")
-ROUTES = os.path.expanduser("~/dev/comma/routes")
+ROUTES = os.path.expanduser("~/workspace/comma/routes")
 # The installed-build schema and the port schema cannot be loaded into one process (duplicate capnp ids), so logs are
 # extracted to plain dicts by a subprocess run with the old-schema interpreter and cached as pickles.
-OLD_PY = os.path.expanduser("~/dev/comma/opendbc/.venv/bin/python")
+OLD_PY = os.path.expanduser("~/workspace/comma/opendbc/.venv/bin/python")
 CACHE = "/tmp/replay_planner_gv70"
 if "--extract" in sys.argv:
   sys.path.insert(0, XSEG_DIR)

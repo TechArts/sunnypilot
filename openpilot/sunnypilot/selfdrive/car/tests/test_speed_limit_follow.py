@@ -60,15 +60,15 @@ class Car:
   def set_mph(self):
     return round(self.vch.v_cruise_kph * CV.KPH_TO_MPH)
 
-  def main_press(self, long=False, frames=None):
-    """MAIN from cruise off: the camera's main rises and openpilot engages 5 frames into the press. A short MAIN is a 12-frame pulse; for a long one
-    the car sends its long-MAIN bit for the whole press instead (route 94: 1.47 s)."""
+  def main_press(self, long=False, frames=None, engage=True):
+    """MAIN from cruise off: the camera's main rises and openpilot engages 5 frames into the press (engage=False: openpilot refuses, e.g. no-entry).
+    A short MAIN is a 12-frame pulse; for a long one the car sends its long-MAIN bit for the whole press instead (route 94: 1.47 s)."""
     frames = frames or (60 if long else 12)
     self.long_bit = long
     self.step([(ButtonType.mainCruise, True)])
     self.available = True
     self.step(n=4)
-    self.enabled = True
+    self.enabled = engage
     self.step(n=max(0, frames - 5))
     self.long_bit = False
     self.step([(ButtonType.mainCruise, False)])
@@ -101,6 +101,16 @@ class TestSpeedLimitFollow(OpenpilotTestCase):
     # frames of it never reached a long press)
     c = Car()
     c.main_press(frames=100)
+    assert not c.f.follow and c.set_mph() == 38
+
+  def test_refused_long_main_then_set_is_a_plain_cruise(self):
+    # a long MAIN openpilot refused (brake held), released; a later SET- starts a plain cruise, not follow (review R1 2026-11-25)
+    c = Car()
+    c.main_press(long=True, engage=False)
+    c.step(n=50)
+    c.enabled = True
+    c.tap(ButtonType.decelCruise)
+    c.step(n=10)
     assert not c.f.follow and c.set_mph() == 38
 
   def test_freeway_offset_and_limit_changes(self):
