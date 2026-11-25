@@ -14,7 +14,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 
-MIN_SPEED = 15 * CV.MPH_TO_MS           # m/s, no cue below this
+MIN_SPEED = 10 * CV.MPH_TO_MS           # m/s, no cue below this (driver's request 2026-11-25: same as the stop-sign cue's 4.5 m/s)
 MIN_ACCEL = -0.5                        # m/s^2, driver is already slowing down at or below this
 STOP_SPEED_THRESHOLD = 1.0              # m/s, the model's planned speed at its horizon counts as stopped below this
 STOP_SPEED_RATIO = 0.25                 # ... and it must also be well below the current speed
@@ -43,8 +43,9 @@ def model_plans_stop(model_x: Sequence[float], model_v: Sequence[float], v_ego: 
   return not (lead_status and lead_d_rel < stop_dist + LEAD_STOP_MARGIN)
 
 
-def red_ahead_not_slowing(v_ego: float, a_ego: float, brake_pressed: bool, blinker: bool, stop_planned: bool) -> bool:
-  return stop_planned and v_ego > MIN_SPEED and a_ego > MIN_ACCEL and not brake_pressed and not blinker
+def red_ahead_not_slowing(v_ego: float, a_ego: float, brake_pressed: bool, stop_planned: bool) -> bool:
+  """No blinker gate (driver's request 2026-11-25): a red light in a turn lane still needs the driver to slow down."""
+  return stop_planned and v_ego > MIN_SPEED and a_ego > MIN_ACCEL and not brake_pressed
 
 
 class RedLightAlertHelper:
@@ -93,7 +94,7 @@ class RedLightAlertHelper:
     lead = sm['radarState'].leadOne
 
     stop_planned = model_plans_stop(model.position.x, model.velocity.x, CS.vEgo, lead.present, lead.dRel)
-    return red_ahead_not_slowing(CS.vEgo, CS.aEgo, CS.brakePressed, CS.leftBlinker or CS.rightBlinker, stop_planned)
+    return red_ahead_not_slowing(CS.vEgo, CS.aEgo, CS.brakePressed, stop_planned)
 
   def update(self, sm: messaging.SubMaster, events_sp: EventsSP) -> None:
     self._read_params()

@@ -14,7 +14,7 @@ from openpilot.cereal import custom
 from openpilot.common.constants import CV
 from openpilot.common.test import OpenpilotTestCase
 from openpilot.selfdrive.car.cruise import VCruiseHelper, CRUISE_LONG_PRESS
-from openpilot.sunnypilot.selfdrive.car.speed_limit_follow import SpeedLimitFollow, MAIN_LONG_FRAMES
+from openpilot.sunnypilot.selfdrive.car.speed_limit_follow import SpeedLimitFollow
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -41,6 +41,7 @@ class Car:
     self.vch = VCruiseHelper(structs.CarParams(pcmCruise=False), custom.CarParamsSP())
     self.limit_mph, self.school = 40, False
     self.available, self.enabled, self.v_mph, self.gas = False, False, 38, False
+    self.long_bit = False  # the car's long-MAIN bit (carStateSP.mainCruiseLong)
     self.cs_prev = structs.CarState()
     self.enabled_prev = False
 
@@ -53,19 +54,23 @@ class Car:
       if self.enabled and not self.enabled_prev:
         self.vch.initialize_v_cruise(self.cs_prev, 40, False)
       r = SimpleNamespace(speedLimitLast=self.limit_mph * CV.MPH_TO_MS, speedLimitLastValid=self.limit_mph > 0, schoolZone=self.school)
-      self.f.update(cs, self.enabled, r, self.vch, False)
+      self.f.update(cs, SimpleNamespace(mainCruiseLong=self.long_bit), self.enabled, r, self.vch, False)
       self.cs_prev, self.enabled_prev = cs, self.enabled
 
   def set_mph(self):
     return round(self.vch.v_cruise_kph * CV.KPH_TO_MPH)
 
-  def main_press(self, frames):
-    """MAIN from cruise off: the camera's main rises and openpilot engages 5 frames into the press."""
+  def main_press(self, long=False, frames=None):
+    """MAIN from cruise off: the camera's main rises and openpilot engages 5 frames into the press. A short MAIN is a 12-frame pulse; for a long one
+    the car sends its long-MAIN bit for the whole press instead (route 94: 1.47 s)."""
+    frames = frames or (60 if long else 12)
+    self.long_bit = long
     self.step([(ButtonType.mainCruise, True)])
     self.available = True
     self.step(n=4)
     self.enabled = True
     self.step(n=max(0, frames - 5))
+    self.long_bit = False
     self.step([(ButtonType.mainCruise, False)])
 
   def tap(self, button, n=1):
@@ -82,18 +87,25 @@ class Car:
 class TestSpeedLimitFollow(OpenpilotTestCase):
   def test_short_main_is_a_plain_cruise(self):
     c = Car()
-    c.main_press(12)
+    c.main_press()
     c.step(n=100)
     assert not c.f.follow and c.set_mph() == 38
 
   def test_long_main_follows_the_limit_plus_the_street_offset(self):
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     assert c.f.follow and c.set_mph() == 45
+
+  def test_only_the_cars_long_bit_makes_it_long(self):
+    # the car decides: a MAIN held 1 s without its long-MAIN bit stays a plain cruise (route 94: the short bit is a 0.11 s pulse, so counting
+    # frames of it never reached a long press)
+    c = Car()
+    c.main_press(frames=100)
+    assert not c.f.follow and c.set_mph() == 38
 
   def test_freeway_offset_and_limit_changes(self):
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.limit_mph = 65
     c.step()
     assert c.set_mph() == 75
@@ -103,7 +115,7 @@ class TestSpeedLimitFollow(OpenpilotTestCase):
 
   def test_res_plus_tap_changes_and_keeps_the_offset(self):
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.tap(ButtonType.accelCruise, 3)  # stock 1 mph per tap
     assert c.set_mph() == 48 and c.params.d["SpeedLimitFollowOffsetStreet"] == 8
     c.limit_mph = 35
@@ -113,7 +125,7 @@ class TestSpeedLimitFollow(OpenpilotTestCase):
   def test_long_press_steps_whole_units_both_ways(self):
     # review: off the 1.6 km/h grid, a long SET- rounded down by a fraction of a mph and never lowered the speed
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.hold(ButtonType.decelCruise, CRUISE_LONG_PRESS + 1)
     assert c.set_mph() == 40 and c.params.d["SpeedLimitFollowOffsetStreet"] == 0
     c.hold(ButtonType.accelCruise, CRUISE_LONG_PRESS + 1)
@@ -122,7 +134,7 @@ class TestSpeedLimitFollow(OpenpilotTestCase):
   def test_set_minus_on_the_gas_does_not_raise_the_offset(self):
     # review: VCruiseHelper clips SET- on the gas up to vEgo; that is no offset change
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.limit_mph = 65
     c.step()
     c.gas, c.v_mph = True, 80
@@ -134,19 +146,19 @@ class TestSpeedLimitFollow(OpenpilotTestCase):
   def test_speed_limit_assist_mode_disables_it(self):
     # review: SLA writes the set speed too; follow would learn those writes as offset changes
     c = Car(SpeedLimitMode=Mode.assist)
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     assert not c.f.follow
 
   def test_no_limit_keeps_the_set_speed(self):
     c = Car()
     c.limit_mph = 0
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.step(n=10)
     assert c.f.follow and c.set_mph() == 38
 
   def test_school_zone_waits_for_set_minus(self):
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.limit_mph, c.school = 25, True
     c.step(n=50)
     assert c.f.school_pending and c.set_mph() == 45
@@ -159,7 +171,7 @@ class TestSpeedLimitFollow(OpenpilotTestCase):
 
   def test_resume_follows_again_set_minus_does_not(self):
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.enabled = False  # brake
     c.step(n=10)
     c.step([(ButtonType.accelCruise, True)])
@@ -177,15 +189,15 @@ class TestSpeedLimitFollow(OpenpilotTestCase):
 
   def test_main_while_on_ends_it(self):
     c = Car()
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     c.step([(ButtonType.mainCruise, True)])
     c.available, c.enabled = False, False
-    c.step(n=MAIN_LONG_FRAMES + 5)
+    c.step(n=60)
     c.step([(ButtonType.mainCruise, False)])
     assert not c.f.follow and not c.f.resume_follow
 
   def test_other_cars_never_follow(self):
     c = Car()
     c.f.available = False
-    c.main_press(MAIN_LONG_FRAMES + 5)
+    c.main_press(long=True)
     assert not c.f.follow and c.set_mph() == 38

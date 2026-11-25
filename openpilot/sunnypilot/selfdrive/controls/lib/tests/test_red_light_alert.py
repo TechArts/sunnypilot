@@ -71,17 +71,17 @@ class TestModelPlansStop:
 
 class TestRedAheadNotSlowing:
   def test_baseline(self):
-    assert red_ahead_not_slowing(V_CRUISING, 0.0, False, False, True)
+    assert red_ahead_not_slowing(V_CRUISING, 0.0, False, True)
 
   def test_each_gate(self):
-    assert not red_ahead_not_slowing(MIN_SPEED - 0.1, 0.0, False, False, True)  # too slow
-    assert not red_ahead_not_slowing(V_CRUISING, -0.6, False, False, True)      # already decelerating
-    assert not red_ahead_not_slowing(V_CRUISING, 0.0, True, False, True)        # braking
-    assert not red_ahead_not_slowing(V_CRUISING, 0.0, False, True, True)        # blinker
-    assert not red_ahead_not_slowing(V_CRUISING, 0.0, False, False, False)      # no stop planned
+    assert not red_ahead_not_slowing(MIN_SPEED - 0.1, 0.0, False, True)  # too slow
+    assert not red_ahead_not_slowing(V_CRUISING, -0.6, False, True)      # already decelerating
+    assert not red_ahead_not_slowing(V_CRUISING, 0.0, True, True)        # braking
+    assert not red_ahead_not_slowing(V_CRUISING, 0.0, False, False)      # no stop planned
 
-  def test_threshold_is_15_mph(self):
-    assert MIN_SPEED == pytest.approx(15 * CV.MPH_TO_MS)
+  def test_fires_at_12_mph(self):
+    # 10 mph threshold: a red light approached at 12 mph without slowing is cued (was silent under 15 mph)
+    assert red_ahead_not_slowing(12 * CV.MPH_TO_MS, 0.0, False, True)
 
 
 class TestRedLightDebounce:
@@ -133,13 +133,17 @@ class TestUpdateReadsRealRadarSchema:
   """RadarState.LeadData has 'present' (no 'status'): a stand-in that only has the real fields makes any other lead access fail."""
 
   @staticmethod
-  def sm(lead):
+  def sm(lead, blinker=False):
     model = SimpleNamespace(position=SimpleNamespace(x=path(stop_dist=60.0)[0]), velocity=SimpleNamespace(x=path(stop_dist=60.0)[1]))
-    car_state = SimpleNamespace(vEgo=V_CRUISING, aEgo=0.0, brakePressed=False, leftBlinker=False, rightBlinker=False)
+    car_state = SimpleNamespace(vEgo=V_CRUISING, aEgo=0.0, brakePressed=False, leftBlinker=blinker, rightBlinker=False)
     return {'carState': car_state, 'modelV2': model, 'radarState': SimpleNamespace(leadOne=lead)}
 
   def test_read_condition_with_no_lead(self):
     assert RedLightAlertHelper.read_condition(self.sm(SimpleNamespace(present=False, dRel=0.0)))
+
+  def test_blinker_does_not_silence_it(self):
+    # a red light in a turn lane, blinker on, not slowing: still cued (driver's request 2026-11-25)
+    assert RedLightAlertHelper.read_condition(self.sm(SimpleNamespace(present=False, dRel=0.0), blinker=True))
 
   def test_read_condition_with_lead_at_the_stop(self):
     assert not RedLightAlertHelper.read_condition(self.sm(SimpleNamespace(present=True, dRel=55.0)))
