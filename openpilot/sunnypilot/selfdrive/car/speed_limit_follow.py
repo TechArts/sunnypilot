@@ -60,7 +60,8 @@ class SpeedLimitFollow:
     if self.main_held_frames:
       self.main_held_frames += 1
     for b in CS.buttonEvents:
-      if b.type == ButtonType.mainCruise:
+      b_type = getattr(b.type, "raw", b.type)
+      if b_type == ButtonType.mainCruise:
         if b.pressed:
           self.main_held_frames, self.main_long_used = 1, False
           self.main_from_off = not CS.cruiseState.available
@@ -69,8 +70,8 @@ class SpeedLimitFollow:
             self.follow = self.resume_follow = False
         else:
           self.main_held_frames = 0
-      elif b.type.raw in SPEED_BUTTONS:  # .raw: a capnp enum does not hash like its int (as VCruiseHelper's button_timers)
-        held_dir = SPEED_BUTTONS[b.type.raw]
+      elif b_type in SPEED_BUTTONS:  # capnp enums vs ints
+        held_dir = SPEED_BUTTONS[b_type]
         if not b.pressed:
           self.last_engage_button = b.type
           self._speed_released = True  # its short-press step lands on this frame
