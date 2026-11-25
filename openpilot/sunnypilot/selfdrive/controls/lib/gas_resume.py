@@ -45,10 +45,11 @@ class GasResume:
     closing = -lead.vRel
     return closing > 0.0 and closing ** 2 / (2.0 * margin) > -LEAD_EASE_MAX_DECEL
 
-  def ease_lead(self, a_mpc: float, lead, v_ego: float, t_follow: float, suppress: bool = False) -> float:
+  def ease_lead(self, a_mpc: float, leads, v_ego: float, t_follow: float, suppress: bool = False) -> float:
     """The MPC (lead) candidate right after a gas override: its braking is limited to LEAD_EASE_MAX_DECEL for LEAD_EASE_TIME, so the car does
-    not brake hard the moment the driver lifts off after passing or closing in, but only while that limit is enough (lead_needs_more) and decel
-    is not forced. The model candidate (stops, lights) is never eased. Call after update() in the same frame."""
-    if self.since_gas < LEAD_EASE_TIME and not suppress and not self.lead_needs_more(lead, v_ego, t_follow):
+    not brake hard the moment the driver lifts off after passing or closing in, but only while that limit is enough for every lead the MPC
+    brakes for (radarState leadOne and leadTwo, the model's car expected ahead, e.g. a cut-in) and decel is not forced. The model candidate
+    (stops, lights) is never eased. Call after update() in the same frame."""
+    if self.since_gas < LEAD_EASE_TIME and not suppress and not any(self.lead_needs_more(lead, v_ego, t_follow) for lead in leads):
       return max(a_mpc, LEAD_EASE_MAX_DECEL)
     return a_mpc

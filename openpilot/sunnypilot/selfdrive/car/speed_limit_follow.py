@@ -65,6 +65,8 @@ class SpeedLimitFollow:
           self.last_engage_button = ButtonType.mainCruise  # MAIN engages on the press (the camera's main rises before the release)
           if CS.cruiseState.available:  # MAIN turns cruise off
             self.follow = self.resume_follow = False
+        else:  # a long MAIN engages while it is held (the camera's main rises ~0.1 s into it): a later SET-/RES+ engage is a plain cruise
+          self.main_long = self.main_from_off = False
       elif b_type in SPEED_BUTTONS:  # capnp enums vs ints
         held_dir = SPEED_BUTTONS[b_type]
         if not b.pressed:
