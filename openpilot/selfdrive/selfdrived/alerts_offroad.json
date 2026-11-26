@@ -12,6 +12,11 @@
     "text": "Connect to internet to check for updates. sunnypilot won't automatically start until it connects to internet to check for updates.",
     "severity": 1
   },
+  "Offroad_DriverProfileInvalid": {
+    "text": "Driver profile: settings ignored or clamped, defaults used for them (%1). Fix the profile and apply it again.",
+    "severity": 0,
+    "_comment": "Set extra field to the number of problems and their list."
+  },
   "Offroad_UpdateFailed": {
     "text": "Unable to download updates\n%1",
     "severity": 1,
