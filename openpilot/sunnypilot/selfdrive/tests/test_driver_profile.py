@@ -1,0 +1,282 @@
+"""
+Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
+
+This file is part of sunnypilot and is licensed under the MIT License.
+See the LICENSE.md file in the root directory for more details.
+"""
+import dataclasses
+import datetime
+import json
+import os
+import tempfile
+from types import SimpleNamespace
+from typing import cast
+
+from openpilot.cereal import custom, log
+from opendbc.car import structs
+from opendbc.car.hyundai.interface import CarInterface
+from opendbc.car.hyundai.values import CAR
+from opendbc.sunnypilot.car.hyundai.values import HyundaiSafetyFlagsSP
+from opendbc.sunnypilot.car.interfaces import setup_interfaces
+from openpilot.common.constants import CV
+from openpilot.common.params import Params
+from openpilot.common.realtime import DT_CTRL
+from openpilot.selfdrive.car.car_events import CarEvents
+from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+from openpilot.selfdrive.selfdrived.events import EVENTS, ET, Events
+from openpilot.sunnypilot.selfdrive import driver_profile as dp
+from openpilot.sunnypilot.selfdrive.car.genesis_mode import GenesisModeButton
+from openpilot.sunnypilot.selfdrive.car.hyundai_takeover import steer_fault_alert_window
+from openpilot.sunnypilot.selfdrive.car.speed_limit_follow import SpeedLimitFollow
+from openpilot.sunnypilot.selfdrive.controls.lib import e2e_alerts_helper, gas_resume, over_speed_alert, red_light_alert, stop_cue
+from openpilot.sunnypilot.selfdrive.controls.lib.gas_resume import GasResume
+from openpilot.sunnypilot.selfdrive.controls.lib.red_light_alert import red_ahead_not_slowing
+from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import vote
+from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
+
+EventName = log.OnroadEvent.EventName
+SETTINGS_UI = os.path.join(os.path.dirname(__file__), "..", "..", "sunnylink", "settings_ui.json")
+
+
+def profile_with(**sections) -> dp.DriverProfile:
+  """DEFAULT_PROFILE with some keys replaced: profile_with(gas_resume={"enabled": False})."""
+  return dataclasses.replace(dp.DEFAULT_PROFILE, **{s: dataclasses.replace(getattr(dp.DEFAULT_PROFILE, s), **kv) for s, kv in sections.items()})
+
+
+class TestDefaultsAreTheForkConstants:
+  """The cutover guard: a missing DriverProfile drives exactly as the constants did at 25615e941."""
+
+  def test_values(self):
+    p = dp.DEFAULT_PROFILE
+    assert (p.wheel_button.long_press, p.wheel_button.hold_s) == ("genesis_mode", 1.0)
+    assert p.main_button.long_press == "speed_limit_follow"
+    assert dataclasses.astuple(p.red_light) == (10.0, -0.5, 80.0, 10.0, 0.3, 5.0, 3.0, 6.0, 2.0, 1.3)
+    assert dataclasses.astuple(p.stop_cue) == (True, 4.5, 25.0, -2.5)
+    assert dataclasses.astuple(p.green_light) == (1.0, 1.0)
+    assert dataclasses.astuple(p.cues) == (True, True)
+    assert dataclasses.astuple(p.alerts) == (True, True)
+    assert dataclasses.astuple(p.speed_limit) == ("America/Los_Angeles", (0, 1, 2, 3, 4), ("07:00", "17:00"), 25, 35, 55)
+    assert dataclasses.astuple(p.over_speed) == (2.0, 5.0)
+    assert dataclasses.astuple(p.gas_resume) == (True, 0.5, 2.0, -0.5, 2.5, -0.8)
+    assert dataclasses.astuple(p.soft_stop) == (1.15, 5.0)
+
+  def test_module_names_keep_their_old_values(self):
+    assert red_light_alert.MIN_SPEED == 10 * CV.MPH_TO_MS
+    assert (red_light_alert.MIN_ACCEL, red_light_alert.STOP_DIST_MAX, red_light_alert.LEAD_STOP_MARGIN) == (-0.5, 80.0, 10.0)
+    assert (red_light_alert.HOLD_TIME, red_light_alert.REARM_CLEAR_TIME, red_light_alert.BRAKE_RECENT_TIME) == (0.3, 5.0, 3.0)
+    assert (red_light_alert.GAS_LIFT_TIME, red_light_alert.LATE_DECEL, red_light_alert.REACTION_TIME) == (6.0, 2.0, 1.3)
+    assert (stop_cue.STOP_SIGN_MIN_SPEED, stop_cue.BRAKE_NOW_MIN_SPEED, stop_cue.BRAKE_NOW_ACCEL) == (4.5, 25 * CV.MPH_TO_MS, -2.5)
+    assert (e2e_alerts_helper.GO_WAIT, e2e_alerts_helper.BRAKE_GO_LOOKBACK) == (1.0, 1.0)
+    assert (over_speed_alert.OVER_SPEED_HOLD_TIME, over_speed_alert.OVER_SPEED_REARM_CLEAR_TIME) == (2.0, 5.0)
+    assert (gas_resume.GAS_RESUME_HOLD, gas_resume.GAS_RESUME_DECEL_TIME, gas_resume.GAS_RESUME_MAX_DECEL) == (0.5, 2.0, -0.5)
+    assert (gas_resume.LEAD_EASE_TIME, gas_resume.LEAD_EASE_MAX_DECEL) == (2.5, -0.8)
+    assert vote.LOCAL_TZ.key == "America/Los_Angeles"
+    assert (vote.MPH.school_max, vote.MPH.school_base_min) == (25, 35)
+
+  def test_every_default_is_inside_its_range(self):
+    for name, cls in dp.SECTIONS.items():
+      for f in dataclasses.fields(cls):
+        if "range" in f.metadata and not isinstance(f.default, tuple):
+          lo, hi = f.metadata["range"]
+          assert lo <= f.default <= hi, f"{name}.{f.name}"
+        if "choices" in f.metadata:
+          assert f.default in f.metadata["choices"], f"{name}.{f.name}"
+
+  def test_numeric_keys_carry_a_unit_suffix(self):
+    unitless = {"low_speed_decel_gain", "school_days", "school_hours"}
+    for cls in dp.SECTIONS.values():
+      for f in dataclasses.fields(cls):
+        if "range" in f.metadata and f.name not in unitless:
+          assert f.name.endswith(("_s", "_mps", "_mps2", "_mph", "_m")), f.name
+
+  def test_round_trip(self):
+    assert dp.parse(json.loads(json.dumps(dp.to_dict(dp.DEFAULT_PROFILE)))) == (dp.DEFAULT_PROFILE, [])
+
+
+class TestParse:
+  def test_missing_and_empty_are_defaults(self):
+    assert dp.parse(None) == (dp.DEFAULT_PROFILE, [])
+    assert dp.parse({}) == (dp.DEFAULT_PROFILE, [])
+    assert dp.parse({"schema_version": 1, "red_light": {}}) == (dp.DEFAULT_PROFILE, [])
+
+  def test_out_of_range_is_clamped_per_key(self):
+    p, problems = dp.parse({"soft_stop": {"low_speed_decel_gain": 0.8}, "red_light": {"hold_s": 9.0, "min_speed_mph": 12}})
+    assert p.soft_stop.low_speed_decel_gain == 1.0  # never softer
+    assert p.red_light.hold_s == 1.0 and p.red_light.min_speed_mph == 12.0
+    assert len(problems) == 2 and all("clamped" in m for m in problems)
+
+  def test_strict_refuses_instead_of_clamping(self):
+    p, problems = dp.parse({"soft_stop": {"low_speed_decel_gain": 0.8}}, strict=True)
+    assert p.soft_stop.low_speed_decel_gain == 1.15 and "outside" in problems[0]
+
+  def test_wrong_types_take_the_default(self):
+    p, problems = dp.parse({"gas_resume": {"enabled": "yes", "hold_s": "1"}, "speed_limit": {"freeway_min_mph": 60.5},
+                            "wheel_button": {"long_press": "toggle"}, "cues": {"bookmark": 1}})
+    assert p.gas_resume == dp.DEFAULT_PROFILE.gas_resume
+    assert p.speed_limit.freeway_min_mph == 55 and p.wheel_button.long_press == "genesis_mode" and p.cues.bookmark
+    assert len(problems) == 5
+
+  def test_unknown_keys_and_sections_are_ignored_and_reported(self):
+    p, problems = dp.parse({"red_light": {"min_speed": 20}, "lasers": {"on": True}})
+    assert p == dp.DEFAULT_PROFILE and len(problems) == 2
+
+  def test_unknown_schema_version_is_all_defaults(self):
+    p, problems = dp.parse({"schema_version": 2, "soft_stop": {"low_speed_decel_gain": 1.3}})
+    assert p == dp.DEFAULT_PROFILE and len(problems) == 1
+
+  def test_not_an_object(self):
+    assert dp.parse([1, 2])[0] == dp.DEFAULT_PROFILE and dp.parse("x")[1]
+
+  def test_school_rule_group_fallbacks(self):
+    p, problems = dp.parse({"speed_limit": {"school_hours": ["17:00", "07:00"], "school_days": [0, 7], "time_zone": "Mars/Olympus"}})
+    assert p.speed_limit.school_hours == ("07:00", "17:00") and p.speed_limit.school_days == (0, 1, 2, 3, 4)
+    assert p.speed_limit.time_zone == "" and len(problems) == 3  # an unknown zone turns the school rule off
+
+  def test_nan_is_a_wrong_type(self):
+    p, problems = dp.parse({"gas_resume": {"max_decel_mps2": float("nan")}})
+    assert p.gas_resume.max_decel_mps2 == -0.5 and problems
+
+
+class TestLoad:
+  def setup_method(self):
+    self.params = Params(tempfile.mkdtemp())
+
+  def alert(self):
+    return self.params.get(dp.OFFROAD_ALERT)
+
+  def test_missing_param_is_defaults_without_alert(self):
+    assert dp.load(self.params) == dp.DEFAULT_PROFILE
+    assert self.alert() is None
+
+  def test_invalid_json_is_defaults_with_alert(self):
+    os.makedirs(os.path.dirname(self.params.get_param_path(dp.PARAM_KEY)), exist_ok=True)
+    with open(self.params.get_param_path(dp.PARAM_KEY), "w") as f:
+      f.write("{not json")
+    assert dp.load(self.params) == dp.DEFAULT_PROFILE
+    assert self.alert()["extra"].startswith("1: ")
+
+  def test_clamped_value_is_used_and_reported_then_cleared(self):
+    self.params.put(dp.PARAM_KEY, {"schema_version": 1, "gas_resume": {"lead_max_decel_mps2": -5.0}}, block=True)
+    assert dp.load(self.params).gas_resume.lead_max_decel_mps2 == -2.0
+    assert "lead_max_decel_mps2" in self.alert()["extra"]
+    self.params.put(dp.PARAM_KEY, dp.to_dict(dp.DEFAULT_PROFILE), block=True)
+    assert dp.load(self.params) == dp.DEFAULT_PROFILE
+    assert self.alert() is None
+
+  def test_read_only_load_never_writes_the_alert(self):
+    self.params.put(dp.PARAM_KEY, {"lasers": 1}, block=True)
+    assert dp.load(self.params, report=False) == dp.DEFAULT_PROFILE
+    assert self.alert() is None
+
+
+class TestParamSchema:
+  def test_ranges_equal_settings_ui(self):
+    with open(SETTINGS_UI) as f:
+      ui = json.load(f)
+    widgets = {}
+
+    def walk(node):
+      if isinstance(node, dict):
+        if "key" in node and "widget" in node:
+          widgets[node["key"]] = node
+        for v in node.values():
+          walk(v)
+      elif isinstance(node, list):
+        for v in node:
+          walk(v)
+    walk(ui)
+    for key, spec in dp.PARAM_SCHEMA.items():
+      w = widgets.get(key)
+      if w is None:
+        continue  # SpeedLimitFollowOffset*: no widget, the range is speed_limit_follow.OFFSET_RANGE
+      if spec.kind is bool:
+        assert w["widget"] == "toggle", key
+      elif w["widget"] == "option":
+        assert (w["min"], w["max"], w.get("step", 1)) == (spec.lo, spec.hi, spec.step), key
+      else:
+        assert [o["value"] for o in w["options"]] == list(range(spec.lo, spec.hi + 1)), key
+
+  def test_follow_offset_range_matches_the_feature(self):
+    from openpilot.sunnypilot.selfdrive.car.speed_limit_follow import OFFSET_RANGE
+    for key in ("SpeedLimitFollowOffsetStreet", "SpeedLimitFollowOffsetFreeway"):
+      assert (dp.PARAM_SCHEMA[key].lo, dp.PARAM_SCHEMA[key].hi) == OFFSET_RANGE
+
+  def test_check_params(self):
+    assert dp.check_params({"HyundaiTakeoverTorque": 150, "HyundaiTakeoverReleaseTorque": 100, "RedLightAlert": True}) == []
+    assert len(dp.check_params({"HyundaiResumeAngleRate": 23})) == 1
+    assert len(dp.check_params({"HyundaiTakeoverTorque": 155})) == 1  # step 10
+    assert len(dp.check_params({"HyundaiTakeoverTorque": 100, "HyundaiTakeoverReleaseTorque": 150})) == 1
+    assert dp.check_params({"HyundaiTakeoverTorque": 0, "HyundaiTakeoverReleaseTorque": 150}) == []  # filter off
+    assert len(dp.check_params({"RedLightAlert": 1, "Foo": 3})) == 2
+
+
+class TestProfileReachesTheFeatures:
+  def test_gas_resume_off_is_the_upstream_planner(self):
+    g = GasResume(0.05, profile_with(gas_resume={"enabled": False}).gas_resume)
+    for _ in range(20):
+      g.update(True, 30., 25., -2.0)
+    assert g.update(False, 30., 25., -2.0) == -2.0
+    assert g.ease_lead(-1.5, (), 30., 1.45) == -1.5
+
+  def test_low_speed_decel_gain(self):
+    CP = CarInterface.get_non_essential_params(CAR.GENESIS_GV70_2ND_GEN)
+    CP_SP = CarInterface.get_non_essential_params_sp(CP, CAR.GENESIS_GV70_2ND_GEN)
+    CP.openpilotLongitudinalControl = True
+    assert LongitudinalPlanner(CP, CP_SP)._low_speed_decel_gain(3.0) == 1.15
+    assert LongitudinalPlanner(CP, CP_SP, profile=profile_with(soft_stop={"low_speed_decel_gain": 1.0}))._low_speed_decel_gain(3.0) == 1.0
+
+  def test_red_light_threshold(self):
+    cfg = profile_with(red_light={"min_speed_mph": 30.0}).red_light
+    assert red_ahead_not_slowing(20 * CV.MPH_TO_MS, 0.0, False, 40.0)
+    assert not red_ahead_not_slowing(20 * CV.MPH_TO_MS, 0.0, False, 40.0, cfg=cfg)
+
+  def test_empty_time_zone_turns_the_school_rule_off(self):
+    weekday_school = datetime.datetime(2026, 11, 24, 8, 30, tzinfo=vote.LOCAL_TZ)
+    v = vote.SpeedLimitVote(0.05, profile_with(speed_limit={"time_zone": ""}).speed_limit)
+    assert not vote.in_school_hours(weekday_school, v.school_rule)
+    assert vote.in_school_hours(weekday_school)
+
+  def test_wheel_button_none_never_switches(self):
+    params = SimpleNamespace(store={}, remove=lambda k: None, get_bool=lambda k: True, put_bool=lambda k, v, block=False: None)
+    btn = GenesisModeButton(SimpleNamespace(carFingerprint="GENESIS_GV70_2ND_GEN"), params, profile_with(wheel_button={"long_press": "none"}).wheel_button)
+    cs = SimpleNamespace(gearShifter=structs.CarState.GearShifter.park, vEgo=0.0)
+    assert not any(btn.update(p, cs, False) for p in [False] * 100 + [True] * 300)
+
+  def test_main_button_plain_turns_the_follow_off(self):
+    params = cast(Params, SimpleNamespace(get=lambda k, return_default=False: {"SpeedLimitMode": Mode.warning}.get(k, 5)))
+    CP = structs.CarParams(brand="hyundai", pcmCruise=False)
+    CP_SP = structs.CarParamsSP(safetyParam=int(HyundaiSafetyFlagsSP.MAIN_BUTTON_ENGAGE))
+    assert SpeedLimitFollow(CP, CP_SP, params).available
+    assert not SpeedLimitFollow(CP, CP_SP, params, profile_with(main_button={"long_press": "plain"})).available
+
+  def test_alert_quieting_off_is_upstream(self):
+    quiet, upstream = Events(), Events(False, False)
+    assert quiet.get_events_mapping() is EVENTS
+    steer = upstream.get_events_mapping()[EventName.steerTempUnavailableSilent][ET.WARNING]
+    assert steer.audible_alert == log.SelfdriveState.AudibleAlert.prompt
+    disengage = upstream.get_events_mapping()[EventName.pedalPressed][ET.USER_DISABLE]
+    assert disengage.audible_alert == log.SelfdriveState.AudibleAlert.disengage
+    assert EVENTS[EventName.steerTempUnavailableSilent][ET.WARNING].audible_alert == log.SelfdriveState.AudibleAlert.none  # not mutated
+
+  def test_steer_fault_window_is_upstream_without_the_takeover_filter(self):
+    def window(brand, torque):
+      CP, CP_SP = structs.CarParams(brand=brand), custom.CarParamsSP(hyundaiTakeoverTorque=torque)
+      return steer_fault_alert_window(CP, CP_SP), CarEvents(CP, CP_SP).steer_fault_window_frames
+    assert window("hyundai", 150) == (2.0, int(2.0 / DT_CTRL))
+    assert window("hyundai", 0) == (1.5, int(1.5 / DT_CTRL))
+    assert window("toyota", 150) == (1.5, int(1.5 / DT_CTRL))
+
+
+class TestSafety:
+  def test_no_safety_bit_depends_on_the_settings(self):
+    """The [param] keys the profile writes and DriverProfile itself, through opendbc's params path: safetyParam and the flags that feed it stay."""
+    def build(params_list):
+      CP = CarInterface.get_non_essential_params(CAR.GENESIS_GV70_2ND_GEN)
+      CP_SP = CarInterface.get_non_essential_params_sp(CP, CAR.GENESIS_GV70_2ND_GEN)
+      setup_interfaces(CarInterface, CP, CP_SP, params_list)
+      return CP, CP_SP
+    driver = {"HyundaiSteerFeel": "3", "HyundaiCurveHold": "1", "HyundaiTakeoverTorque": "150", "HyundaiTakeoverReleaseTorque": "100",
+              "HyundaiTakeoverHold": "500", "HyundaiResumeAngleRate": "22", dp.PARAM_KEY: json.dumps(dp.to_dict(dp.DEFAULT_PROFILE))}
+    (cp0, sp0), (cp1, sp1) = build([]), build([driver])
+    assert sp0.safetyParam == sp1.safetyParam
+    assert [c.safetyParam for c in cp0.safetyConfigs] == [c.safetyParam for c in cp1.safetyConfigs]
