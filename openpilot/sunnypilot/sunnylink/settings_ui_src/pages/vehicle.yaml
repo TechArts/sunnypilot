@@ -88,9 +88,9 @@ sections:
     widget: option
     title: Resume Angle Rate (GV70)
     description: Maximum steering angle step per frame while steering resumes after a takeover, in tenths of a degree. Default
-      10 (1.0 deg per frame).
+      10 (1.0 deg per frame). At most 22, the steering's own limit of 2.2 deg per frame.
     min: 1
-    max: 50
+    max: 22
     step: 1
     enablement:
     - $ref: '#/macros/offroad'
