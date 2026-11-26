@@ -28,12 +28,13 @@ EVENT_NAME = {v: k for k, v in EventName.schema.enumerants.items()}
 
 
 class Events(EventsBase):
-  def __init__(self):
+  def __init__(self, quiet_silent_steer_fault: bool = True, quiet_brake_disengage: bool = True):
     super().__init__()
     self.event_counters = dict.fromkeys(EVENTS.keys(), 0)
+    self.mapping = events_mapping(quiet_silent_steer_fault, quiet_brake_disengage)
 
   def get_events_mapping(self) -> dict[int, dict[str, Alert | AlertCallbackType]]:
-    return EVENTS
+    return self.mapping
 
   def get_event_name(self, event: int):
     return EVENT_NAME[event]
@@ -910,6 +911,28 @@ if HARDWARE.get_device_type() == 'mici':
       ET.NO_ENTRY: NoEntryAlert("Reverse"),
     },
   })
+
+# The fork quiets these two alerts (EVENTS above). selfdrived keeps upstream's for other brands and when DriverProfile.alerts turns quieting off.
+UPSTREAM_ALERTS: dict[int, tuple[str, Alert | AlertCallbackType]] = {
+  EventName.steerTempUnavailableSilent: (ET.WARNING, Alert(
+    "Steering Assist Temporarily Unavailable",
+    "",
+    AlertStatus.userPrompt, AlertSize.small,
+    Priority.LOW, VisualAlert.steerRequired, AudibleAlert.prompt, 1.8)),
+  EventName.pedalPressed: (ET.USER_DISABLE, EngagementAlert(AudibleAlert.disengage)),
+}
+
+
+def events_mapping(quiet_silent_steer_fault: bool, quiet_brake_disengage: bool) -> dict[int, dict[str, Alert | AlertCallbackType]]:
+  upstream = [e for e, quiet in ((EventName.steerTempUnavailableSilent, quiet_silent_steer_fault), (EventName.pedalPressed, quiet_brake_disengage))
+              if not quiet]
+  if not upstream:
+    return EVENTS
+  mapping = dict(EVENTS)
+  for e in upstream:
+    et, alert = UPSTREAM_ALERTS[e]
+    mapping[e] = {**EVENTS[e], et: alert}
+  return mapping
 
 
 if __name__ == '__main__':

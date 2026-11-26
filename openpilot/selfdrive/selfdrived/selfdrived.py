@@ -34,6 +34,7 @@ from openpilot.sunnypilot.selfdrive.car.hyundai_takeover import hyundai_takeover
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.controller import IntelligentCruiseButtonManagement
 from openpilot.sunnypilot.selfdrive.selfdrived.button_state_tracker import ButtonStateTracker
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+from openpilot.sunnypilot.selfdrive import driver_profile
 
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
@@ -80,6 +81,7 @@ class SelfdriveD:
       self.CP_SP = CP_SP
 
     self.car_events = CarEvents(self.CP, self.CP_SP)
+    self.profile = driver_profile.load(self.params)
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -129,7 +131,10 @@ class SelfdriveD:
 
     self.CS_prev = car.CarState.new_message()
     self.AM = AlertManager()
-    self.events = Events()
+    # the fork's quiet silent-steer-fault and brake-disengage alerts: Hyundai only, and only when the driver profile keeps them
+    hyundai = self.CP.brand == "hyundai"
+    self.events = Events(quiet_silent_steer_fault=hyundai and self.profile.alerts.quiet_silent_steer_fault,
+                         quiet_brake_disengage=hyundai and self.profile.alerts.quiet_brake_disengage)
 
     self.initialized = False
     self.enabled = False
@@ -246,10 +251,10 @@ class SelfdriveD:
       paired = prime_type is not None and int(prime_type) >= 0
       self.events.add(EventName.userBookmark if paired else EventName.userBookmarkNotPaired)
 
-    # Don't add any more events while in dashcam mode, except the red-light and green-light / lead-depart cues
+    # Don't add any more events while in dashcam mode, except the red-light and green-light / lead-depart cues (DriverProfile.cues.in_dashcam_mode)
     if self.CP.passive:
       for e in self.sm['longitudinalPlanSP'].events:
-        if e.name.raw in PASSIVE_CUES:
+        if self.profile.cues.in_dashcam_mode and e.name.raw in PASSIVE_CUES:
           self.events_sp.add(e.name.raw)
       return
 
