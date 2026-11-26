@@ -11,6 +11,13 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPl
 from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
 
 
+class _PlantSM(dict):
+  """The planner's inputs as a dict, plus SubMaster's `alive`: every simulated service counts as alive."""
+  @property
+  def alive(self):
+    return dict.fromkeys(self, True)
+
+
 class Plant:
   messaging_initialized = False
 
@@ -127,15 +134,15 @@ class Plant:
     car_state.carState.vCruise = float(v_cruise * 3.6)
 
     # ******** get controlsState messages for plotting ***
-    sm = {'radarState': radar.radarState,
-          'carState': car_state.carState,
-          'carControl': car_control.carControl,
-          'controlsState': control.controlsState,
-          'selfdriveState': ss.selfdriveState,
-          'modelV2': model.modelV2,
-          'carStateSP': car_state_sp.carStateSP,
-          'liveMapDataSP': live_map_data_sp.liveMapDataSP,
-          'gpsLocation': gps_data.gpsLocation}
+    sm = _PlantSM({'radarState': radar.radarState,
+                   'carState': car_state.carState,
+                   'carControl': car_control.carControl,
+                   'controlsState': control.controlsState,
+                   'selfdriveState': ss.selfdriveState,
+                   'modelV2': model.modelV2,
+                   'carStateSP': car_state_sp.carStateSP,
+                   'liveMapDataSP': live_map_data_sp.liveMapDataSP,
+                   'gpsLocation': gps_data.gpsLocation})
     self.planner.update(sm)
     self.acceleration = self.planner.output_a_target
     if self.planner.output_should_stop:

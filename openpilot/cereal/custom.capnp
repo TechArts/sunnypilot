@@ -453,6 +453,7 @@ struct BackupManagerSP @0xf98d843bfd7004a3 {
 
 struct CarStateSP @0xb86e6369214c01c8 {
   speedLimit @0 :Float32;
+  navSpeedLimit @1 :Float32;  # car navigation speed limit (Hyundai CAN-FD ccNC: HU_Navi_ISLW_PE), m/s, 0 = none
 }
 
 struct LiveMapDataSP @0xf416ec09499d9d19 {
