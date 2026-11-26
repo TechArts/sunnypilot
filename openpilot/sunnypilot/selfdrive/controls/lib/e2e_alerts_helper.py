@@ -6,6 +6,8 @@ See the LICENSE.md file in the root directory for more details.
 """
 
 from openpilot.cereal import messaging, custom
+from opendbc.car import structs
+from opendbc.car.car_helpers import interfaces
 
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
@@ -16,6 +18,8 @@ GREEN_LIGHT_X_THRESHOLD = 30
 LEAD_DEPART_DIST_THRESHOLD = 1.0
 TRIGGER_TIMER_THRESHOLD = 0.3
 
+GearShifter = structs.CarState.GearShifter
+
 
 class E2EStates:
   INACTIVE = 0
@@ -24,8 +28,10 @@ class E2EStates:
 
 
 class E2EAlertsHelper:
-  def __init__(self):
+  def __init__(self, CP: structs.CarParams):
     self._params = Params()
+    # the gears that do not raise wrongGear (selfdrive/car/car_events.py)
+    self.drivable_gears = (GearShifter.drive, *interfaces[CP.carFingerprint].DRIVABLE_GEARS)
     self.frame = -1
     self.green_light_state = E2EStates.INACTIVE
     self.prev_green_light_state = E2EStates.INACTIVE
@@ -71,7 +77,9 @@ class E2EAlertsHelper:
       self.last_moving_frame = self.frame
     recent_moving = self.last_moving_frame == -1 or (self.frame - self.last_moving_frame) * DT_MDL < 2.0
 
-    self.allowed = not moving and not CS.gasPressed and not CC.enabled and not recent_moving
+    # only while stopped in a forward gear (not while parking or reversing)
+    in_drive = CS.gearShifter in self.drivable_gears
+    self.allowed = in_drive and not moving and not CS.gasPressed and not CC.enabled and not recent_moving
 
     # Green Light Alert
     green_light_trigger = False

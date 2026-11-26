@@ -30,7 +30,7 @@ class LongitudinalPlannerSP:
     self.sla = SpeedLimitAssist(CP, CP_SP)
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
     self.source = LongitudinalPlanSource.cruise
-    self.e2e_alerts_helper = E2EAlertsHelper()
+    self.e2e_alerts_helper = E2EAlertsHelper(CP)
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
 
