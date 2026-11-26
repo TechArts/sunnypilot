@@ -678,7 +678,8 @@ class SelfdriveD:
 
 
 def main():
-  config_realtime_process(4, Priority.CTRL_HIGH)
+  # core 4 also runs card and controlsd (same priority) and can saturate; core 7 has modeld (higher priority) and dmonitoringmodeld
+  config_realtime_process(7, Priority.CTRL_HIGH)
   s = SelfdriveD()
   s.run()
 
