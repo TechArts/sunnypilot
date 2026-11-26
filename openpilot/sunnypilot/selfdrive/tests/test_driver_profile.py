@@ -20,6 +20,7 @@ from opendbc.sunnypilot.car.hyundai.values import HyundaiSafetyFlagsSP
 from opendbc.sunnypilot.car.interfaces import setup_interfaces
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
+from openpilot.common.test import OpenpilotTestCase
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.car.car_events import CarEvents
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
@@ -43,7 +44,7 @@ def profile_with(**sections) -> dp.DriverProfile:
   return dataclasses.replace(dp.DEFAULT_PROFILE, **{s: dataclasses.replace(getattr(dp.DEFAULT_PROFILE, s), **kv) for s, kv in sections.items()})
 
 
-class TestDefaultsAreTheForkConstants:
+class TestDefaultsAreTheForkConstants(OpenpilotTestCase):
   """The cutover guard: a missing DriverProfile drives exactly as the constants did at 25615e941."""
 
   def test_values(self):
@@ -93,7 +94,7 @@ class TestDefaultsAreTheForkConstants:
     assert dp.parse(json.loads(json.dumps(dp.to_dict(dp.DEFAULT_PROFILE)))) == (dp.DEFAULT_PROFILE, [])
 
 
-class TestParse:
+class TestParse(OpenpilotTestCase):
   def test_missing_and_empty_are_defaults(self):
     assert dp.parse(None) == (dp.DEFAULT_PROFILE, [])
     assert dp.parse({}) == (dp.DEFAULT_PROFILE, [])
@@ -137,7 +138,7 @@ class TestParse:
     assert p.gas_resume.max_decel_mps2 == -0.5 and problems
 
 
-class TestLoad:
+class TestLoad(OpenpilotTestCase):
   def setup_method(self):
     self.params = Params(tempfile.mkdtemp())
 
@@ -169,7 +170,7 @@ class TestLoad:
     assert self.alert() is None
 
 
-class TestParamSchema:
+class TestParamSchema(OpenpilotTestCase):
   def test_ranges_equal_settings_ui(self):
     with open(SETTINGS_UI) as f:
       ui = json.load(f)
@@ -210,7 +211,7 @@ class TestParamSchema:
     assert len(dp.check_params({"RedLightAlert": 1, "Foo": 3})) == 2
 
 
-class TestProfileReachesTheFeatures:
+class TestProfileReachesTheFeatures(OpenpilotTestCase):
   def test_gas_resume_off_is_the_upstream_planner(self):
     g = GasResume(0.05, profile_with(gas_resume={"enabled": False}).gas_resume)
     for _ in range(20):
@@ -267,7 +268,7 @@ class TestProfileReachesTheFeatures:
     assert window("toyota", 150) == (1.5, int(1.5 / DT_CTRL))
 
 
-class TestSafety:
+class TestSafety(OpenpilotTestCase):
   def test_no_safety_bit_depends_on_the_settings(self):
     """The [param] keys the profile writes and DriverProfile itself, through opendbc's params path: safetyParam and the flags that feed it stay."""
     def build(params_list):
