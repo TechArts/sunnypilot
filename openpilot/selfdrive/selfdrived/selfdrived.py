@@ -144,6 +144,9 @@ class SelfdriveD:
       max(log.LongitudinalPersonality.schema.enumerants.values()),
       self.params
     )
+    # params_thread is the only LongitudinalPersonality writer; a pending button change wins over the stored value
+    self.personality_lock = threading.Lock()
+    self.personality_dirty = False
     self.recalibrating_seen = False
     self.dm_lockout_set = False
     self.dm_uncertain_alerted = False
@@ -514,8 +517,9 @@ class SelfdriveD:
     # Decrement personality on distance button press
     if self.CP.openpilotLongitudinalControl:
       if any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents):
-        self.personality = (self.personality - 1) % 3
-        self.params.put('LongitudinalPersonality', self.personality)
+        with self.personality_lock:
+          self.personality = (self.personality - 1) % 3
+          self.personality_dirty = True
         self.events.add(EventName.personalityChanged)
 
     self.icbm.run(CS, self.sm['carControl'], self.sm['longitudinalPlanSP'], self.is_metric)
@@ -659,7 +663,15 @@ class SelfdriveD:
       self.is_metric = self.params.get_bool("IsMetric")
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
-      self.personality = self.params.get("LongitudinalPersonality", return_default=True)
+      with self.personality_lock:
+        dirty, personality = self.personality_dirty, self.personality
+        self.personality_dirty = False
+      if dirty:
+        self.params.put("LongitudinalPersonality", personality, block=True)
+      stored = self.params.get("LongitudinalPersonality", return_default=True)
+      with self.personality_lock:
+        if not self.personality_dirty and stored != self.personality:
+          self.personality = stored  # a change from outside this process (the UI)
 
       self.mads.read_params()
       time.sleep(0.1)
