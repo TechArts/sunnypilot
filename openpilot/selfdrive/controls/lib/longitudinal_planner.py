@@ -22,6 +22,12 @@ J_CRUISE_BP = [0., 10.0, 25., 40.]
 A_CRUISE_MIN = -0.5
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
+# Below this speed, with openpilot longitudinal control, the planner's own speed state is not allowed to lag the real
+# speed. A car that delivers less decel than requested stays faster than the state, so the MPC plans the stop too gently.
+# 15 m/s covers the stop-behind-lead approaches in test_soft_stop.py (5-15 m/s): there a car that delivers 88 % of the decel
+# 0.6 s late stops 4.4-4.6 m behind a stopped lead with the bound and 2.5-2.8 m without it; an ideal car moves < 0.05 m.
+V_DESIRED_BOUND_SPEED = 15.0
+
 
 def get_cruise_accel(v_cruise, v_ego, a_cruise_prev, dt):
   target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, ACCEL_MAX)
@@ -73,6 +79,8 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
+    if self.CP.openpilotLongitudinalControl and v_ego < V_DESIRED_BOUND_SPEED:
+      self.v_desired_filter.x = max(self.v_desired_filter.x, v_ego)
 
     # No change cost when user is controlling the speed, or when standstill
     prev_accel_constraint = not (reset_state or sm['carState'].standstill)

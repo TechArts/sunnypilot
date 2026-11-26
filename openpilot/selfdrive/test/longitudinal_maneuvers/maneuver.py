@@ -20,6 +20,10 @@ class Maneuver:
     self.enabled = kwargs.get("enabled", True)
     self.personality = kwargs.get("personality", 0)
     self.force_decel = kwargs.get("force_decel", False)
+    self.actuator_delivery = kwargs.get("actuator_delivery", 1.0)
+    self.actuator_lag = kwargs.get("actuator_lag", 0.0)
+    self.use_long_control = kwargs.get("use_long_control", False)
+    self.platform = kwargs.get("platform", "HONDA_CIVIC")
 
     self.duration = duration
     self.title = title
@@ -34,6 +38,10 @@ class Maneuver:
       only_radar=self.only_radar,
       personality=self.personality,
       force_decel=self.force_decel,
+      actuator_delivery=self.actuator_delivery,
+      actuator_lag=self.actuator_lag,
+      use_long_control=self.use_long_control,
+      platform=self.platform,
     )
 
     valid = True

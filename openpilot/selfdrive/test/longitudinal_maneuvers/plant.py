@@ -4,8 +4,9 @@ import numpy as np
 
 from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
-from openpilot.common.realtime import Ratekeeper, DT_MDL
-from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
+from openpilot.common.realtime import Ratekeeper, DT_MDL, DT_CTRL
+from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState, LongControl
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
@@ -15,7 +16,8 @@ class Plant:
   messaging_initialized = False
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
-               enabled=True, only_lead2=False, only_radar=False, personality=0, force_decel=False):
+               enabled=True, only_lead2=False, only_radar=False, personality=0, force_decel=False,
+               actuator_delivery=1.0, actuator_lag=0.0, use_long_control=False, platform="HONDA_CIVIC"):
     self.rate = 1. / DT_MDL
 
     if not Plant.messaging_initialized:
@@ -47,11 +49,20 @@ class Plant:
     time.sleep(0.1)
     self.sm = messaging.SubMaster(['longitudinalPlan'])
 
-    from opendbc.car.honda.values import CAR
-    from opendbc.car.honda.interface import CarInterface
+    from opendbc.car.car_helpers import interfaces
 
-    CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-    CP_SP = CarInterface.get_non_essential_params_sp(CP, CAR.HONDA_CIVIC)
+    CarInterface = interfaces[platform]
+    CP = CarInterface.get_non_essential_params(platform)
+    CP_SP = CarInterface.get_non_essential_params_sp(CP, platform)
+    # opt-in: openpilot longitudinal control with the real LongControl on the planner output, as controlsd runs it
+    self.use_long_control = use_long_control
+    if use_long_control:
+      CP.openpilotLongitudinalControl = True
+      self.long_control = LongControl(CP, CP_SP)
+    # optional actuator model: the car delivers `actuator_delivery` x the requested decel (accel passes unchanged),
+    # through a first-order lag with time constant `actuator_lag` s. The defaults are an ideal car.
+    self.actuator_delivery = actuator_delivery
+    self.actuator_lag = actuator_lag
     self.planner = LongitudinalPlanner(CP, CP_SP, init_v=self.speed)
 
   @property
@@ -124,6 +135,8 @@ class Plant:
     control.controlsState.forceDecel = self.force_decel
     car_state.carState.vEgo = float(self.speed)
     car_state.carState.standstill = bool(self.speed < 0.01)
+    if self.use_long_control:
+      car_state.carState.aEgo = float(self.acceleration)
     car_state.carState.vCruise = float(v_cruise * 3.6)
 
     # ******** get controlsState messages for plotting ***
@@ -137,9 +150,17 @@ class Plant:
           'liveMapDataSP': live_map_data_sp.liveMapDataSP,
           'gpsLocation': gps_data.gpsLocation}
     self.planner.update(sm)
-    self.acceleration = self.planner.output_a_target
-    if self.planner.output_should_stop:
-      self.acceleration = min(-0.5, self.acceleration)
+    requested_acceleration = self.planner.output_a_target
+    if self.use_long_control:
+      CS = car_state.carState
+      # controlsd runs at 100 Hz, the planner at 20 Hz: LongControl steps against this CS, held until the next plant step
+      for _ in range(round(self.ts / DT_CTRL)):
+        requested_acceleration = self.long_control.update(True, CS, self.planner.output_a_target, self.planner.output_should_stop,
+                                                          (ACCEL_MIN, ACCEL_MAX))
+    elif self.planner.output_should_stop:
+      requested_acceleration = min(-0.5, requested_acceleration)
+    delivered = requested_acceleration * (self.actuator_delivery if requested_acceleration < 0 else 1.0)
+    self.acceleration += (delivered - self.acceleration) * self.ts / (self.actuator_lag + self.ts)
     self.speed = self.speed + self.acceleration * self.ts
     self.should_stop = self.planner.output_should_stop
     fcw = self.planner.fcw
