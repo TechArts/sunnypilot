@@ -30,7 +30,7 @@ class FakeParams:
 @pytest.fixture
 def helper(monkeypatch):
   monkeypatch.setattr(red_light_alert, "Params", FakeParams)
-  return RedLightAlertHelper()
+  return RedLightAlertHelper(openpilot_longitudinal=True)
 
 
 def path(stop_dist=None, v_end=0.0):
@@ -103,9 +103,27 @@ class TestRedAheadNotSlowing:
   def test_silent_while_openpilot_controls_speed(self):
     assert not red_ahead_not_slowing(V_CITY, -0.3, False, STOP_FAR, long_active=True)
 
-  def test_late_stop_cues_even_while_easing_in_or_openpilot(self):
-    # 20 m/s with the stop 50 m ahead needs 4 m/s^2: cued whatever the driver or openpilot is doing (unless braking hard already)
-    assert red_ahead_not_slowing(20.0, -0.3, False, 50.0, since_brake=1.0, long_active=True)
+  def test_late_stop_threshold_while_openpilot_drives(self):
+    # slowing (no reaction margin): 12 m/s needs 144 / 70 = 2.06 m/s^2 at 35 m (cue), 1.95 at 37 m (silent)
+    assert red_ahead_not_slowing(V_CITY, -0.1, False, 35.0, long_active=True)
+    assert not red_ahead_not_slowing(V_CITY, -0.1, False, 37.0, long_active=True)
+
+  def test_late_stop_counts_the_reaction_when_not_slowing(self):
+    # not slowing: 1.3 s at 12 m/s (15.6 m) is gone before braking starts, so the cue comes at 51 m, not 35 m
+    assert red_ahead_not_slowing(V_CITY, 0.0, False, 51.0, long_active=True)
+    assert not red_ahead_not_slowing(V_CITY, 0.0, False, 53.0, long_active=True)
+
+  def test_stop_at_zero_distance_cues(self):
+    assert red_ahead_not_slowing(V_CITY, -0.1, False, 0.0, since_brake=1.0, long_active=True)
+
+  def test_gas_still_held_cues(self):
+    # R1 1: since_gas is 0 while the gas is pressed; a slight decel as the throttle builds is not a coast
+    assert red_ahead_not_slowing(V_CITY, -0.1, False, STOP_FAR, since_gas=0.0)
+
+  def test_gas_after_a_brake_tap_cues(self):
+    # R1 1: a brake tap then back on the gas toward the light: the brake no longer counts
+    assert red_ahead_not_slowing(V_CITY, 0.5, False, STOP_FAR, since_brake=1.0, since_gas=0.0)
+    assert red_ahead_not_slowing(V_CITY, 0.5, False, STOP_FAR, since_brake=1.0, since_gas=0.2)
 
 
 class TestRedLightDebounce:
@@ -191,3 +209,22 @@ class TestUpdateReadsRealRadarSchema:
       helper.update(sm, events)
     assert helper.red_light_alert
     assert len(events.names) == 1
+
+  def test_same_light_cues_once_while_coasting(self, helper):
+    # R1 2: cue, then gas released and coasting past GAS_LIFT_TIME with the same stop still ahead: one cue, not two
+    events = SimpleNamespace(names=[], add=lambda name: events.names.append(name))
+    none = SimpleNamespace(present=False, dRel=0.0)
+    for _ in range(FRAMES_HOLD):
+      helper.update(self.sm(none), events)
+    helper.update(self.sm(none, gas=True), events)
+    coast = self.sm(none)
+    coast['carState'].aEgo = -0.15
+    for _ in range(round((GAS_LIFT_TIME + 1.0) / DT_MDL)):
+      helper.update(coast, events)
+    assert len(events.names) == 1
+
+  def test_stock_scc_does_not_silence_it(self, monkeypatch):
+    # R1 3: longActive is also true while stock SCC drives (ICBM, no openpilot longitudinal); SCC does not stop for lights
+    monkeypatch.setattr(red_light_alert, "Params", FakeParams)
+    stock = RedLightAlertHelper(openpilot_longitudinal=False)
+    assert stock.read_condition(self.sm(SimpleNamespace(present=False, dRel=0.0), long_active=True))
