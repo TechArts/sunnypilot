@@ -9,15 +9,32 @@ unit's nav limit, and OSM vote, with guards against the wrong-low values seen on
 driver's notes): a camera reading counts only when OSM confirms it (truck "55" and ramp advisories on freeways), the nav snapping to a ramp at
 speed loses to OSM, a big drop at speed must persist, and a school zone's conditional limit applies only in weekday school hours.
 """
+import dataclasses
 import datetime
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from openpilot.common.constants import CV
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, SpeedLimit
 
-LOCAL_TZ = ZoneInfo("America/Los_Angeles")  # the car's home time zone: school hours are local
-SCHOOL_DAYS = range(5)  # Mon..Fri
-SCHOOL_HOURS = (datetime.time(7, 0), datetime.time(17, 0))
+
+@dataclass(frozen=True)
+class SchoolRule:
+  """When a school zone's conditional limit is in force: weekdays and local hours in the car's home time zone (tz None: never)."""
+  tz: ZoneInfo | None
+  days: frozenset[int]
+  start: datetime.time
+  end: datetime.time
+
+  @classmethod
+  def from_profile(cls, cfg: SpeedLimit) -> "SchoolRule":
+    """DriverProfile.speed_limit: time_zone "" turns the rule off (the loader already replaced an unknown zone with "")."""
+    start, end = (datetime.time.fromisoformat(h) for h in cfg.school_hours)
+    return cls(ZoneInfo(cfg.time_zone) if cfg.time_zone else None, frozenset(cfg.school_days), start, end)
+
+
+DEFAULT_SCHOOL_RULE = SchoolRule.from_profile(DEFAULT_PROFILE.speed_limit)
+LOCAL_TZ = DEFAULT_SCHOOL_RULE.tz  # the default home time zone (America/Los_Angeles): school hours are local
 SCHOOL_SIGN_MEMORY = 30.  # s a "School Crossing" sign keeps a school-zone candidate alive
 
 RAISE_HOLD = 2.  # s an increase must persist
@@ -36,8 +53,8 @@ class Units:
   school_base_min: int  # OSM at least this means the street's own limit is higher than the school zone's
 
 
-MPH = Units(CV.MPH_TO_MS, 10, 45, 15, 25, 35)
-KPH = Units(CV.KPH_TO_MS, 15, 70, 25, 30, 50)
+MPH = Units(CV.MPH_TO_MS, 10, 45, 15, DEFAULT_PROFILE.speed_limit.school_zone_max_mph, DEFAULT_PROFILE.speed_limit.school_street_min_mph)
+KPH = Units(CV.KPH_TO_MS, 15, 70, 25, 30, 50)  # the profile's _mph thresholds do not apply to a km/h display
 
 
 @dataclass
@@ -51,9 +68,11 @@ def _units(v: float, u: Units) -> int | None:
   return int(round(v / u.to_ms)) if v > 0. else None
 
 
-def in_school_hours(now: datetime.datetime) -> bool:
-  local = now.astimezone(LOCAL_TZ)
-  return local.weekday() in SCHOOL_DAYS and SCHOOL_HOURS[0] <= local.time() < SCHOOL_HOURS[1]
+def in_school_hours(now: datetime.datetime, rule: SchoolRule = DEFAULT_SCHOOL_RULE) -> bool:
+  if rule.tz is None:
+    return False
+  local = now.astimezone(rule.tz)
+  return local.weekday() in rule.days and rule.start <= local.time() < rule.end
 
 
 def vote(dash: int | None, nav: int | None, osm: int | None, school_sign: bool, v_ego: int, u: Units) -> tuple[int | None, bool, bool]:
@@ -78,8 +97,10 @@ def vote(dash: int | None, nav: int | None, osm: int | None, school_sign: bool, 
 
 class SpeedLimitVote:
   """vote() per frame plus persistence and the school-zone time rule. update() returns the limit to use."""
-  def __init__(self, dt: float):
+  def __init__(self, dt: float, cfg: SpeedLimit = DEFAULT_PROFILE.speed_limit):
     self.dt = dt
+    self.school_rule = SchoolRule.from_profile(cfg)
+    self.mph = dataclasses.replace(MPH, school_max=cfg.school_zone_max_mph, school_base_min=cfg.school_street_min_mph)
     self.applied: int | None = None
     self.applied_from_map = False
     self.applied_school = False
@@ -91,12 +112,12 @@ class SpeedLimitVote:
 
   def update(self, dash: float, nav: float, osm: float, school_sign: bool, v_ego: float, is_metric: bool,
              now: datetime.datetime | None = None) -> VoteResult:
-    u = KPH if is_metric else MPH
+    u = KPH if is_metric else self.mph
     self.school_sign_age = 0. if school_sign else self.school_sign_age + self.dt
     d, n, o, v = _units(dash, u), _units(nav, u), _units(osm, u), int(round(v_ego / u.to_ms))
     cand, from_map, school = vote(d, n, o, self.school_sign_age <= SCHOOL_SIGN_MEMORY, v, u)
 
-    if school and not in_school_hours(now or datetime.datetime.now(datetime.UTC)):
+    if school and not in_school_hours(now or datetime.datetime.now(datetime.UTC), self.school_rule):
       # not in force: the street's own limit (OSM's, else the one before the zone)
       cand, from_map, school = (o, True, False) if o is not None else (self.base, self.base_from_map, False)
       if cand is None and self.applied_school:  # a school zone applied in school hours, nothing to go back to: no limit

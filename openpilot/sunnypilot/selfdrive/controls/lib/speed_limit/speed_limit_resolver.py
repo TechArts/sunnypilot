@@ -16,6 +16,7 @@ from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD, get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE, LIMIT_ADAPT_ACC
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.vote import SpeedLimitVote
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, SpeedLimit
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
 
@@ -34,7 +35,7 @@ class SpeedLimitResolver:
   source: custom.LongitudinalPlanSP.SpeedLimit.Source
   speed_limit_offset: float
 
-  def __init__(self):
+  def __init__(self, cfg: SpeedLimit = DEFAULT_PROFILE.speed_limit):
     self.params = Params()
     self.frame = -1
 
@@ -77,7 +78,7 @@ class SpeedLimitResolver:
     self.speed_limit_final_last = 0.
     self.speed_limit_offset = 0.
     self.school_zone = False
-    self._vote = SpeedLimitVote(DT_MDL)
+    self._vote = SpeedLimitVote(DT_MDL, cfg)
 
   def update_speed_limit_states(self) -> None:
     self.speed_limit_final = self.speed_limit + self.speed_limit_offset

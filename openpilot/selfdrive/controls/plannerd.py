@@ -8,6 +8,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.ldw import LaneDepartureWarning
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 import openpilot.cereal.messaging as messaging
+from openpilot.sunnypilot.selfdrive import driver_profile
 
 
 def main():
@@ -26,7 +27,7 @@ def main():
   ignore_services = ["liveMapDataSP", "carStateSP", "selfdriveStateSP", gps_location_service]
 
   ldw = LaneDepartureWarning()
-  longitudinal_planner = LongitudinalPlanner(CP, CP_SP)
+  longitudinal_planner = LongitudinalPlanner(CP, CP_SP, profile=driver_profile.load(params))
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance', 'longitudinalPlanSP'])
   sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'radarState', 'modelV2', 'selfdriveState',
                             'liveMapDataSP', 'carStateSP', 'selfdriveStateSP', gps_location_service],
