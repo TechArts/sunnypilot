@@ -6,9 +6,11 @@ Two parts, both printed:
 - synthetic: the maneuver plant (fake model) with scripted lead speed profiles;
 - logged: every risky logged launch (LOGGED), run closed loop: the logged model, lead speed and set speed, but the car's own speed and
   the gap come from the simulation (the lead moves at its logged speed from the logged gap at the window start).
-Prints the smallest gap, the gap at the end, the highest request and speed, and the time to 3 m/s. Result 2026-11-25: the port's
-planner never closes below the start gap (synthetic) and keeps 3.8-9.1 m on the logged launches the old build closed to 1.45-2.8 m,
-so a dedicated launch guard was not needed (designed, simulated, inert in every case).
+Prints the smallest gap, the gap at the end, the highest request and speed, and the time to 3 m/s. Result 2026-11-26: on the synthetic
+creep-and-stop leads the smallest gap is 4.14 m (it can close up to 1.4 m below a 6 m start gap on the slow-delivery rows, and stops
+>= 4.1 m behind); drive-away launches lose at most 0.3 m; the logged launches the old build closed to 1.45-2.8 m keep 3.8-9.1 m
+(3.47 m on the 0.80/0.7 stress row, `4a` 5:51). A dedicated launch guard was not needed (designed, simulated, inert in every case).
+The synthetic part is asserted in test_launch_gv70.py.
 """
 import copy
 
