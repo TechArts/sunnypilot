@@ -34,7 +34,7 @@ class LongitudinalPlannerSP:
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
     self.source = LongitudinalPlanSource.cruise
     self.e2e_alerts_helper = E2EAlertsHelper()
-    self.red_light_alert_helper = RedLightAlertHelper()
+    self.red_light_alert_helper = RedLightAlertHelper(CP.openpilotLongitudinalControl)
     self.stop_cue_helper = StopCueHelper(CP.openpilotLongitudinalControl)
     self.over_speed_alert_helper = OverSpeedAlertHelper()
     self.accel_boost_sp = AccelBoostSP()
