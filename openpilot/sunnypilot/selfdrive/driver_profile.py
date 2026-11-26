@@ -176,30 +176,42 @@ PARAM_SCHEMA: dict[str, ParamSpec] = {
 }
 
 
-def _parse_hhmm(v: Any) -> datetime.time | None:
+def parse_hhmm(v: Any) -> datetime.time | None:
+  """Exactly "HH:MM" with ASCII digits, 00:00-23:59; anything else (" 7:00", "+7:00", "07: 0", full-width digits) is None."""
   if not isinstance(v, str) or len(v) != 5 or v[2] != ":":
     return None
+  digits = v[:2] + v[3:]
+  if not (digits.isascii() and digits.isdigit()):
+    return None
+  hour, minute = int(v[:2]), int(v[3:])
+  return datetime.time(hour, minute) if hour < 24 and minute < 60 else None
+
+
+def school_hours_times(v: Any) -> tuple[datetime.time, datetime.time] | None:
+  """["HH:MM", "HH:MM"] with start < end -> the two times, else None. The vote's school rule builds its hours with this too."""
+  if not isinstance(v, (list, tuple)) or len(v) != 2:
+    return None
+  start, end = parse_hhmm(v[0]), parse_hhmm(v[1])
+  return (start, end) if start is not None and end is not None and start < end else None
+
+
+def load_zone(name: Any) -> ZoneInfo | None:
+  """The ZoneInfo for an IANA name, or None if it is not a loadable zone (wrong type, typo, missing from tzdata). Never raises."""
+  if not isinstance(name, str) or name == "":
+    return None
   try:
-    return datetime.time(int(v[:2]), int(v[3:]))
-  except ValueError:
+    return ZoneInfo(name)
+  except Exception:  # ZoneInfoNotFoundError (a KeyError), ValueError for malformed keys, OSError, TypeError
     return None
 
 
-def _school_hours_ok(v: Any) -> bool:
-  if not isinstance(v, (list, tuple)) or len(v) != 2:
-    return False
-  start, end = _parse_hhmm(v[0]), _parse_hhmm(v[1])
-  return start is not None and end is not None and start < end
-
-
-def time_zone_ok(name: str) -> bool:
-  if name == "":
-    return True
+def _show(v: Any) -> str:
+  """repr for a problem message, short and safe (repr of an int over 4300 digits raises)."""
   try:
-    ZoneInfo(name)
-  except (ValueError, KeyError, OSError):  # ZoneInfoNotFoundError is a KeyError
-    return False
-  return True
+    s = repr(v)
+  except ValueError:
+    return f"<{type(v).__name__} too large to show>"
+  return s if len(s) <= 60 else s[:57] + "..."
 
 
 def _value(section: str, f: dataclasses.Field, raw: Any, strict: bool, problems: list[str]) -> Any:
@@ -214,47 +226,51 @@ def _value(section: str, f: dataclasses.Field, raw: Any, strict: bool, problems:
     if (isinstance(raw, (list, tuple)) and all(isinstance(d, int) and not isinstance(d, bool) and lo <= d <= hi for d in raw)
         and len(set(raw)) == len(raw)):
       return tuple(sorted(raw))
-    problems.append(f"{key}: {raw!r} is not a list of distinct days {lo}-{hi}")
+    problems.append(f"{key}: {_show(raw)} is not a list of distinct days {lo}-{hi}")
     return default
   if f.name == "school_hours":
-    if _school_hours_ok(raw):
-      return (raw[0], raw[1])
-    problems.append(f"{key}: {raw!r} is not [\"HH:MM\", \"HH:MM\"] with start < end")
+    times = school_hours_times(raw)
+    if times is not None:
+      return (times[0].strftime("%H:%M"), times[1].strftime("%H:%M"))
+    problems.append(f"{key}: {_show(raw)} is not [\"HH:MM\", \"HH:MM\"] with start < end")
     return default
   if f.name == "time_zone":
-    if isinstance(raw, str) and time_zone_ok(raw):
+    if raw == "" or load_zone(raw) is not None:
       return raw
-    problems.append(f"{key}: {raw!r} is not an IANA time zone (school-zone rule off)")
-    return ""
+    problems.append(f"{key}: {_show(raw)} is not an IANA time zone this build knows, {default!r} used")
+    return default
   if choices is not None:
     if raw in choices:
       return raw
-    problems.append(f"{key}: {raw!r} is not one of {', '.join(choices)}")
+    problems.append(f"{key}: {_show(raw)} is not one of {', '.join(choices)}")
     return default
   if isinstance(default, bool):
     if isinstance(raw, bool):
       return raw
-    problems.append(f"{key}: {raw!r} is not true/false")
+    problems.append(f"{key}: {_show(raw)} is not true/false")
     return default
 
   if isinstance(default, int):
     ok = isinstance(raw, int) and not isinstance(raw, bool)
     expected = "an integer"
   else:
-    ok = isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(raw)
+    try:
+      ok = isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(raw)
+    except OverflowError:  # an int too large for a float
+      ok = False
     expected = "a number"
   if not ok:
-    problems.append(f"{key}: {raw!r} is not {expected}")
+    problems.append(f"{key}: {_show(raw)} is not {expected}")
     return default
   value: float = int(raw) if isinstance(default, int) else float(raw)
   lo, hi = rng
   if lo <= value <= hi:
     return value
   if strict:
-    problems.append(f"{key}: {raw!r} is outside {lo}..{hi}")
+    problems.append(f"{key}: {_show(raw)} is outside {lo}..{hi}")
     return default
   clamped = type(value)(min(max(value, lo), hi))
-  problems.append(f"{key}: {raw!r} clamped to {clamped}")
+  problems.append(f"{key}: {_show(raw)} clamped to {clamped}")
   return clamped
 
 
@@ -268,7 +284,7 @@ def parse(raw: Any, strict: bool = False) -> tuple[DriverProfile, list[str]]:
 
   version = raw.get("schema_version", SCHEMA_VERSION)
   if version != SCHEMA_VERSION or isinstance(version, bool):
-    return DEFAULT_PROFILE, [f"schema_version {version!r} is not {SCHEMA_VERSION}: all defaults"]
+    return DEFAULT_PROFILE, [f"schema_version {_show(version)} is not {SCHEMA_VERSION}: all defaults"]
 
   sections = {}
   for name, raw_section in raw.items():
@@ -277,7 +293,7 @@ def parse(raw: Any, strict: bool = False) -> tuple[DriverProfile, list[str]]:
     if name not in SECTIONS:
       problems.append(f"{name}: unknown section, ignored")
     elif not isinstance(raw_section, dict):
-      problems.append(f"{name}: {raw_section!r} is not a table, defaults")
+      problems.append(f"{name}: {_show(raw_section)} is not a table, defaults")
   for name, cls in SECTIONS.items():
     raw_section = raw.get(name)
     if not isinstance(raw_section, dict):
@@ -310,17 +326,17 @@ def check_params(values: dict[str, Any]) -> list[str]:
       continue
     if spec.kind is bool:
       if not isinstance(v, bool):
-        problems.append(f"param.{key}: {v!r} is not true/false")
+        problems.append(f"param.{key}: {_show(v)} is not true/false")
       continue
     if not isinstance(v, int) or isinstance(v, bool):
-      problems.append(f"param.{key}: {v!r} is not an integer")
+      problems.append(f"param.{key}: {_show(v)} is not an integer")
     elif not spec.lo <= v <= spec.hi:
-      problems.append(f"param.{key}: {v} is outside {spec.lo}..{spec.hi}")
+      problems.append(f"param.{key}: {_show(v)} is outside {spec.lo}..{spec.hi}")
     elif (v - spec.lo) % spec.step:
       problems.append(f"param.{key}: {v} is not a multiple of {spec.step} from {spec.lo}")
   takeover, release = values.get("HyundaiTakeoverTorque"), values.get("HyundaiTakeoverReleaseTorque")
   if isinstance(takeover, int) and isinstance(release, int) and takeover > 0 and release > takeover:
-    problems.append(f"param.HyundaiTakeoverReleaseTorque: {release} is above HyundaiTakeoverTorque {takeover}")
+    problems.append(f"param.HyundaiTakeoverReleaseTorque: {_show(release)} is above HyundaiTakeoverTorque {_show(takeover)}")
   return problems
 
 

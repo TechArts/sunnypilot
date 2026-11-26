@@ -14,6 +14,7 @@ from typing import cast
 
 from openpilot.cereal import custom, log
 from opendbc.car import structs
+from opendbc.car.structs import car
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR
 from opendbc.sunnypilot.car.hyundai.values import HyundaiSafetyFlagsSP
@@ -21,10 +22,11 @@ from opendbc.sunnypilot.car.interfaces import setup_interfaces
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
 from openpilot.common.test import OpenpilotTestCase
-from openpilot.common.realtime import DT_CTRL
+from openpilot.common.realtime import DT_CTRL, DT_MDL
 from openpilot.selfdrive.car.car_events import CarEvents
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 from openpilot.selfdrive.selfdrived.events import EVENTS, ET, Events
+from openpilot.selfdrive.selfdrived.selfdrived import SelfdriveD
 from openpilot.sunnypilot.selfdrive import driver_profile as dp
 from openpilot.sunnypilot.selfdrive.car.genesis_mode import GenesisModeButton
 from openpilot.sunnypilot.selfdrive.car.hyundai_takeover import steer_fault_alert_window
@@ -131,11 +133,131 @@ class TestParse(OpenpilotTestCase):
   def test_school_rule_group_fallbacks(self):
     p, problems = dp.parse({"speed_limit": {"school_hours": ["17:00", "07:00"], "school_days": [0, 7], "time_zone": "Mars/Olympus"}})
     assert p.speed_limit.school_hours == ("07:00", "17:00") and p.speed_limit.school_days == (0, 1, 2, 3, 4)
-    assert p.speed_limit.time_zone == "" and len(problems) == 3  # an unknown zone turns the school rule off
+    assert p.speed_limit.time_zone == "America/Los_Angeles" and len(problems) == 3  # a bad zone keeps the default zone
+
+  def test_bad_time_zones_keep_the_default_and_empty_opts_out(self):
+    for tz in (None, 5, ["UTC"], "Mars/Olympus", "america/los angeles", "../etc/passwd", "UTC\x00", "x" * 300):
+      p, problems = dp.parse({"speed_limit": {"time_zone": tz}})
+      assert p.speed_limit.time_zone == "America/Los_Angeles" and len(problems) == 1, tz
+    assert dp.parse({"speed_limit": {"time_zone": ""}}) == (profile_with(speed_limit={"time_zone": ""}), [])
+    assert dp.parse({"speed_limit": {"time_zone": "Europe/Berlin"}})[1] == []
+
+  def test_school_hours_accept_only_ascii_hh_mm(self):
+    for bad in (" 7:00", "+7:00", "07: 0", "-0:00", "\uff10\uff17:\uff10\uff10", "7:00", "07:0", "07-00", "24:00", "07:60", "07:00 ", 700, None):
+      assert dp.parse_hhmm(bad) is None, bad
+      p, problems = dp.parse({"speed_limit": {"school_hours": [bad, "17:00"]}})
+      assert p.speed_limit.school_hours == ("07:00", "17:00") and len(problems) == 1, bad
+    assert dp.parse_hhmm("00:00") == datetime.time(0, 0) and dp.parse_hhmm("23:59") == datetime.time(23, 59)
+    assert dp.parse({"speed_limit": {"school_hours": ["06:45", "15:30"]}})[0].speed_limit.school_hours == ("06:45", "15:30")
 
   def test_nan_is_a_wrong_type(self):
     p, problems = dp.parse({"gas_resume": {"max_decel_mps2": float("nan")}})
     assert p.gas_resume.max_decel_mps2 == -0.5 and problems
+
+  def test_huge_ints(self):
+    p, problems = dp.parse({"gas_resume": {"max_decel_mps2": 10 ** 400}, "speed_limit": {"freeway_min_mph": 10 ** 5000}})
+    assert p.gas_resume.max_decel_mps2 == -0.5  # not a float: the default
+    assert p.speed_limit.freeway_min_mph == 75  # an int: clamped
+    assert len(problems) == 2 and all(len(m) < 200 for m in problems)
+    assert len(dp.check_params({"HyundaiTakeoverTorque": 10 ** 5000, "HyundaiTakeoverReleaseTorque": 10 ** 5001})) == 3
+
+
+ADVERSARIAL = [None, True, False, 0, 1, -1, 7, 2 ** 63, 10 ** 400, -10 ** 400, 10 ** 5000, 0.5, -0.5, 1e308, -1e308, float("nan"), float("inf"),
+               "", " 7:00", "+7:00", "07: 0", "-0:00", "\uff10\uff17:\uff10\uff10", "07:00", "17:00", "23:59", "24:00", "UTC",
+               "America/Los_Angeles", "Mars/Olympus", "../etc/passwd", "UTC\x00", "genesis_mode", "none", "plain", "speed_limit_follow",
+               [], [0], [6, 0], [0, 7], [0, 0], [True], ["07:00", "17:00"], ["17:00", "07:00"], ["07:00", " 8:00"], ["00:00", "23:59"], {},
+               {"a": 1}, "x" * 10000]
+
+
+def build_consumers(p: dp.DriverProfile) -> None:
+  """Everything that takes a profile section (planner helpers, vote, card and selfdrived parts), one step each where cheap."""
+  now = datetime.datetime(2026, 11, 24, 16, 30, tzinfo=datetime.UTC)
+  v = vote.SpeedLimitVote(0.05, p.speed_limit)
+  v.update(11.0, 11.0, 15.6, True, 10.0, False, now)
+  vote.in_school_hours(now, v.school_rule)
+  red_light_alert.RedLightAlertHelper(True, p.red_light)
+  red_ahead_not_slowing(15.0, 0.1, False, 40.0, 2.0, 3.0, False, p.red_light)
+  stop_cue.StopCueHelper(True, p)
+  e2e_alerts_helper.E2EAlertsHelper(p.green_light)
+  over_speed_alert.OverSpeedAlertHelper(p.over_speed).alert.step(30.0, 20.0, 10, False)
+  g = GasResume(0.05, p.gas_resume)
+  g.update(False, 30.0, 25.0, -1.0)
+  g.ease_lead(-1.0, (SimpleNamespace(present=True, dRel=40.0, vRel=-3.0, aLeadK=0.0),), 30.0, 1.45)
+  GenesisModeButton(SimpleNamespace(carFingerprint="GENESIS_GV70_2ND_GEN"), SimpleNamespace(), p.wheel_button)
+  params = cast(Params, SimpleNamespace(get=lambda k, return_default=False: {"SpeedLimitMode": Mode.warning}.get(k, 5)))
+  SpeedLimitFollow(structs.CarParams(brand="hyundai", pcmCruise=False), structs.CarParamsSP(), params, p)
+  Events(p.alerts.quiet_silent_steer_fault, p.alerts.quiet_brake_disengage)
+
+
+def gv70_planner(p: dp.DriverProfile) -> LongitudinalPlanner:
+  CP = CarInterface.get_non_essential_params(CAR.GENESIS_GV70_2ND_GEN)
+  CP_SP = CarInterface.get_non_essential_params_sp(CP, CAR.GENESIS_GV70_2ND_GEN)
+  CP.openpilotLongitudinalControl = True
+  return LongitudinalPlanner(CP, CP_SP, profile=p)
+
+
+class TestEveryAcceptedValueIsUsable(OpenpilotTestCase):
+  """Property: for every key and every adversarial value, parse() never raises, the result is canonical (its JSON parses back strictly to
+  itself) and every consumer can be built from it, so no value can stop a process at onroad start."""
+
+  def test_every_key_and_value(self):
+    for name, cls in dp.SECTIONS.items():
+      for f in dataclasses.fields(cls):
+        last_accepted = None
+        for raw in ADVERSARIAL:
+          for strict in (False, True):
+            p, problems = dp.parse({"schema_version": 1, name: {f.name: raw}}, strict=strict)
+            assert dp.parse(json.loads(json.dumps(dp.to_dict(p))), strict=True) == (p, []), (name, f.name, raw)
+            build_consumers(p)
+            if not problems:
+              last_accepted = p
+        if last_accepted is not None:
+          gv70_planner(last_accepted)
+
+  def test_top_level_garbage(self):
+    for raw in ADVERSARIAL:
+      for doc in (raw, {"schema_version": raw}, {"red_light": raw}, {raw if isinstance(raw, str) else "k": raw}):
+        build_consumers(dp.parse(doc)[0])
+
+
+NON_DEFAULT = profile_with(
+  wheel_button={"long_press": "none", "hold_s": 2.0}, main_button={"long_press": "plain"},
+  red_light={"min_speed_mph": 20.0, "hold_s": 0.5}, stop_cue={"enabled": False, "brake_now_accel_mps2": -3.0},
+  green_light={"go_wait_s": 2.0, "brake_release_lookback_s": 0.5}, cues={"bookmark": False, "in_dashcam_mode": False},
+  alerts={"quiet_silent_steer_fault": False, "quiet_brake_disengage": False},
+  speed_limit={"time_zone": "Europe/Berlin", "school_zone_max_mph": 20, "school_street_min_mph": 40, "freeway_min_mph": 60},
+  over_speed={"hold_s": 4.0, "rearm_clear_s": 10.0}, gas_resume={"enabled": False, "lead_ease_s": 1.0},
+  soft_stop={"low_speed_decel_gain": 1.25, "low_speed_decel_speed_mps": 6.0})
+
+
+class TestProcessWiring(OpenpilotTestCase):
+  """Each process passes its loaded profile's sections to the right feature."""
+
+  def test_planner(self):
+    lp = gv70_planner(NON_DEFAULT)
+    p = NON_DEFAULT
+    assert lp.red_light_alert_helper.cfg is p.red_light
+    assert lp.stop_cue_helper.cfg is p.stop_cue and lp.stop_cue_helper.red_light is p.red_light and not lp.stop_cue_helper.enabled
+    assert lp.e2e_alerts_helper.cfg is p.green_light
+    assert lp.over_speed_alert_helper.alert.hold_frames == round(4.0 / DT_MDL)
+    assert lp.over_speed_alert_helper.alert.rearm_frames == round(10.0 / DT_MDL)
+    assert lp.resolver._vote.school_rule.tz is not None and lp.resolver._vote.school_rule.tz.key == "Europe/Berlin"
+    assert (lp.resolver._vote.mph.school_max, lp.resolver._vote.mph.school_base_min) == (20, 40)
+    assert lp.gas_resume.cfg is p.gas_resume
+    assert lp.soft_stop is p.soft_stop and lp._low_speed_decel_gain(3.0) == 1.25
+
+  def test_selfdrived(self):
+    Params().put(dp.PARAM_KEY, dp.to_dict(NON_DEFAULT), block=True)
+    CP = car.CarParams.new_message(brand="hyundai", openpilotLongitudinalControl=True)
+    sd = SelfdriveD(CP=CP, CP_SP=custom.CarParamsSP.new_message())
+    assert sd.profile == NON_DEFAULT
+    assert sd.events.get_events_mapping()[EventName.pedalPressed][ET.USER_DISABLE].audible_alert == log.SelfdriveState.AudibleAlert.disengage
+
+  def test_selfdrived_other_brand_never_quiet(self):
+    sd = SelfdriveD(CP=car.CarParams.new_message(brand="toyota"), CP_SP=custom.CarParamsSP.new_message())
+    assert sd.profile == dp.DEFAULT_PROFILE and sd.events.get_events_mapping() is not EVENTS
+    hy = SelfdriveD(CP=car.CarParams.new_message(brand="hyundai"), CP_SP=custom.CarParamsSP.new_message())
+    assert hy.events.get_events_mapping() is EVENTS
 
 
 class TestLoad(OpenpilotTestCase):

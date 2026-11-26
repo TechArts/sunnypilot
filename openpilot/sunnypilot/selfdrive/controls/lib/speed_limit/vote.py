@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from openpilot.common.constants import CV
-from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, SpeedLimit
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, SpeedLimit, load_zone, school_hours_times
 
 
 @dataclass(frozen=True)
@@ -28,9 +28,13 @@ class SchoolRule:
 
   @classmethod
   def from_profile(cls, cfg: SpeedLimit) -> "SchoolRule":
-    """DriverProfile.speed_limit: time_zone "" turns the rule off (the loader already replaced an unknown zone with "")."""
-    start, end = (datetime.time.fromisoformat(h) for h in cfg.school_hours)
-    return cls(ZoneInfo(cfg.time_zone) if cfg.time_zone else None, frozenset(cfg.school_days), start, end)
+    """DriverProfile.speed_limit with the loader's own parsers: time_zone "" turns the rule off; hours or a zone they reject (a profile not
+    built by the loader) fall back to the defaults, so this never raises."""
+    default = DEFAULT_PROFILE.speed_limit
+    times = school_hours_times(cfg.school_hours) or school_hours_times(default.school_hours)
+    assert times is not None
+    tz = None if cfg.time_zone == "" else (load_zone(cfg.time_zone) or load_zone(default.time_zone))
+    return cls(tz, frozenset(cfg.school_days), times[0], times[1])
 
 
 DEFAULT_SCHOOL_RULE = SchoolRule.from_profile(DEFAULT_PROFILE.speed_limit)
