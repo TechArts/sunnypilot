@@ -46,6 +46,7 @@ WINDOWS = {
   "red": ("00000070--56c11c9d5a", 365.0, 377.0),
   "launch1": ("00000076--d430fb4042", 1203.0, 1210.0),
   "launch2": ("0000006f--668aed956d", 236.0, 243.0),
+  "launch3": ("0000007d--77bcff9869", 1244.0, 1258.0),
 }
 
 SERVICES = ("carState", "carControl", "carStateSP", "controlsState", "selfdriveState", "radarState", "modelV2", "longitudinalPlan")
@@ -63,7 +64,10 @@ def route_t0(route):
 
 
 def lead_dict(l):
-  return {k: getattr(l, k) for k in ("dRel", "yRel", "vRel", "vLead", "vLeadK", "aLeadK", "aLeadTau", "status", "modelProb", "radar", "fcw")}
+  # the shared xseg schema (tools/analysis/cereal, the port's) names the lead flag `present` and has no fcw; kept as "status"
+  d = {k: getattr(l, k) for k in ("dRel", "yRel", "vRel", "vLead", "vLeadK", "aLeadK", "aLeadTau", "modelProb", "radar")}
+  d["status"] = l.present
+  return d
 
 
 def extract(w, e):
@@ -82,7 +86,8 @@ def extract(w, e):
     return dict(forceDecel=c.forceDecel, longControlState=str(c.longControlState), curvature=c.curvature)
   if w == "selfdriveState":
     s = e.selfdriveState
-    return dict(enabled=s.enabled, personality=str(s.personality), experimentalMode=s.experimentalMode)
+    # the shared xseg schema (tools/analysis/cereal) keeps experimentalMode in the deprecated group
+    return dict(enabled=s.enabled, personality=str(s.personality), experimentalMode=s.deprecated.experimentalMode)
   if w == "radarState":
     r = e.radarState
     return dict(leadOne=lead_dict(r.leadOne), leadTwo=lead_dict(r.leadTwo))
@@ -99,9 +104,11 @@ def extract(w, e):
 
 
 def load_window(name):
+  """Windows added at run time (study scripts) pass their bounds to the extractor."""
   p = f"{CACHE}_{name}.pkl"
   if not os.path.exists(p):
-    subprocess.run([OLD_PY, os.path.abspath(__file__), "--extract", name], check=True)
+    route, ts, te = WINDOWS[name]
+    subprocess.run([OLD_PY, os.path.abspath(__file__), "--extract", name, route, str(ts), str(te)], check=True)
   with open(p, "rb") as f:
     return pickle.load(f)
 
@@ -145,11 +152,10 @@ class FakeSM:
 
 
 def fill_lead(dst, d):
-  # installed schema: status/fcw; port schema: present (fcw dropped)
   for k, v in d.items():
     if k == "status":
       dst.present = v
-    elif k != "fcw":
+    else:
       setattr(dst, k, v)
 
 
@@ -285,9 +291,10 @@ def report(name):
 if __name__ == "__main__":
   if "--extract" in sys.argv:
     import pickle
-    n = sys.argv[-1]
+    i = sys.argv.index("--extract")
+    n, route, ts, te = sys.argv[i + 1], sys.argv[i + 2], float(sys.argv[i + 3]), float(sys.argv[i + 4])
     with open(f"{CACHE}_{n}.pkl", "wb") as f:
-      pickle.dump(extract_window(*WINDOWS[n]), f)
+      pickle.dump(extract_window(route, ts, te), f)
   else:
     for n in (sys.argv[1:] or list(WINDOWS)):
       report(n)
