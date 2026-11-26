@@ -62,6 +62,36 @@ class TestMADSStateMachine(OpenpilotTestCase):
         assert State.disabled == self.state_machine.state
         self.clear_events()
 
+  def _immediate_disable_alerts(self, state, et, extra_events=()):
+    self.mads.selfdrive.enabled = False
+    self.mads.selfdrive.state_machine.current_alert_types = []
+    self.events_sp.add(make_event([et, ET.IMMEDIATE_DISABLE]))
+    for ev in extra_events:
+      self.events_sp.add(ev)
+    self.state_machine.state = state
+    self.state_machine.update()
+    assert State.disabled == self.state_machine.state
+    loud = ET.IMMEDIATE_DISABLE in self.mads.selfdrive.state_machine.current_alert_types
+    self.clear_events()
+    return loud
+
+  def test_immediate_disable_is_loud_while_paused_by_brake(self):
+    # a brake pause resumes by itself on release, so a disable from it must be announced
+    for state in ALL_STATES:
+      if state == State.disabled:
+        continue
+      for et in MAINTAIN_STATES[state]:
+        assert self._immediate_disable_alerts(state, et), state
+
+  def test_immediate_disable_is_silent_while_paused_by_gear(self):
+    # paused does not actuate, so an immediate disable has nothing to hand over
+    for state in ALL_STATES:
+      if state == State.disabled:
+        continue
+      for et in MAINTAIN_STATES[state]:
+        loud = self._immediate_disable_alerts(state, et, (EventNameSP.silentWrongGear,))
+        assert loud == (state != State.paused), state
+
   def test_user_disable(self):
     for state in ALL_STATES:
       for et in MAINTAIN_STATES[state]:

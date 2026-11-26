@@ -58,8 +58,11 @@ class StateMachine:
         self.ss_state_machine.current_alert_types.append(ET.USER_DISABLE)
 
       elif self.check_contains(ET.IMMEDIATE_DISABLE):
+        # paused by a gear, door or seatbelt event steers nothing and does not resume by itself: no alert
+        loud = self.state in ACTIVE_STATES or not self.check_contains_in_list()
         self.state = State.disabled
-        self.add_current_alert_types(ET.IMMEDIATE_DISABLE)
+        if loud:
+          self.add_current_alert_types(ET.IMMEDIATE_DISABLE)
 
       else:
         # ENABLED
