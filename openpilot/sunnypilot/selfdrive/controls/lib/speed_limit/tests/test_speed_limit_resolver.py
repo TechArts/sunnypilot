@@ -48,7 +48,7 @@ def setup_sm_mock(mocker):
     'speedLimitAheadDistance': 0.,
   }, mocker)
   gps_data = create_mock({
-    'unixTimestampMillis': time.monotonic() * 1e3,
+    'unixTimestampMillis': 1795578296299,  # UTC wall time as the GPS sends it (route 94), unrelated to time.monotonic()
   }, mocker)
   sm_mock = mocker.MagicMock()
   sm_mock.__getitem__.side_effect = lambda key: {
@@ -57,6 +57,8 @@ def setup_sm_mock(mocker):
     'carStateSP': car_state_sp,
     'gpsLocation': gps_data,
   }[key]
+  now = time.monotonic()
+  sm_mock.recv_time = {'gpsLocation': now, 'liveMapDataSP': now, 'carStateSP': now}
   return sm_mock
 
 
@@ -138,17 +140,69 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
     assert resolver.distance is not None
     assert resolver.source is not None
 
-  @parameterized.expand(list(Policy), names=["policy"])
-  def test_old_map_data_ignored(self, resolver_class, policy, mocker):
+  @parameterized.expand([(p, svc) for p in Policy for svc in ('gpsLocation', 'liveMapDataSP')], names=["policy", "old"])
+  def test_old_map_data_ignored(self, resolver_class, policy, old, mocker):
     resolver = resolver_class()
     resolver.policy = policy
-    sm_mock = mocker.MagicMock()
-    sm_mock['gpsLocation'].unixTimestampMillis = (time.monotonic() - 2 * LIMIT_MAX_MAP_DATA_AGE) * 1e3
-    sm_mock['carStateSP'].navSpeedLimit = 0.
-    sm_mock.alive = {'carStateSP': True}
+    sm_mock = self._nav_sm(mocker, 0.)
+    sm_mock.recv_time[old] = time.monotonic() - 2 * LIMIT_MAX_MAP_DATA_AGE
+    resolver.v_ego = 20.
     resolver._get_from_map_data(sm_mock)
     assert resolver.limit_solutions[SpeedLimitSource.map] == 0.
     assert resolver.distance_solutions[SpeedLimitSource.map] == 0.
+    if policy == Policy.vote:
+      resolver.update(20., sm_mock)
+      assert resolver.limit_solutions[SpeedLimitSource.map] == 0.
+
+  def test_map_data_age_is_on_the_planner_clock(self, resolver_class, mocker):
+    # the GPS message's unixTimestampMillis is UTC wall time (~1.8e12 ms on the port routes, against a monotonic clock of ~2e4 s): fresh
+    # messages are fresh whatever it says
+    resolver = resolver_class()
+    sm_mock = self._nav_sm(mocker, 0.)
+    sm_mock['gpsLocation'].unixTimestampMillis = 1795578296299
+    assert 0. <= resolver._map_data_age(sm_mock) < 1.
+    sm_mock.recv_time['liveMapDataSP'] = time.monotonic() - 3.
+    assert 3. <= resolver._map_data_age(sm_mock) < 4.
+
+  def _ahead_sm(self, mocker, current_mph, ahead_mph, distance, map_age=0.):
+    sm_mock = self._nav_sm(mocker, 0.)
+    live_map = sm_mock['liveMapDataSP']
+    live_map.speedLimit, live_map.speedLimitValid = current_mph * CV.MPH_TO_MS, True
+    live_map.speedLimitAhead, live_map.speedLimitAheadValid, live_map.speedLimitAheadDistance = ahead_mph * CV.MPH_TO_MS, True, distance
+    sm_mock.recv_time['liveMapDataSP'] = time.monotonic() - map_age
+    return sm_mock
+
+  def test_lower_limit_ahead_within_the_adapt_distance(self, resolver_class, mocker):
+    # 55 -> 50 at 73 mph (route 91, Pearblossom Hwy): adapt distance at LIMIT_ADAPT_ACC (v^2 - v_next^2) / 2 = 283 m
+    resolver = resolver_class()
+    resolver.policy = Policy.map_data_only
+    v_ego = 73 * CV.MPH_TO_MS
+    resolver.update(v_ego, self._ahead_sm(mocker, 55, 50, 300.))
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 55 and resolver.distance == 0.
+    resolver.update(v_ego, self._ahead_sm(mocker, 55, 50, 250.))
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 50 and 245. < resolver.distance <= 250.
+
+  def test_distance_ahead_counts_the_travel_since_the_map_message(self, resolver_class, mocker):
+    # mapd measured 300 m one second ago at 32.6 m/s: 267 m now, inside the 283 m adapt distance
+    resolver = resolver_class()
+    resolver.policy = Policy.map_data_only
+    resolver.update(73 * CV.MPH_TO_MS, self._ahead_sm(mocker, 55, 50, 300., map_age=1.))
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 50 and 265. < resolver.distance < 269.
+
+  def test_higher_limit_ahead_is_not_taken_early(self, resolver_class, mocker):
+    resolver = resolver_class()
+    resolver.policy = Policy.map_data_only
+    resolver.update(50 * CV.MPH_TO_MS, self._ahead_sm(mocker, 35, 45, 5.))
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 35 and resolver.distance == 0.
+
+  def test_vote_reads_the_current_osm_limit(self, resolver_class, mocker):
+    # the upstream anticipation must not reach the vote as OSM's limit: car and OSM 65, OSM 55 ahead in 50 m
+    resolver = resolver_class()
+    resolver.policy = Policy.vote
+    sm_mock = self._ahead_sm(mocker, 65, 55, 50.)
+    sm_mock['carStateSP'].speedLimit = sm_mock['carStateSP'].navSpeedLimit = 65 * CV.MPH_TO_MS
+    resolver.update(73 * CV.MPH_TO_MS, sm_mock)
+    assert resolver.limit_solutions[SpeedLimitSource.map] == 65 * CV.MPH_TO_MS
 
   def _nav_sm(self, mocker, nav, map_valid=True):
     sm_mock = setup_sm_mock(mocker)

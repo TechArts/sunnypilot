@@ -132,12 +132,22 @@ class SpeedLimitResolver:
       self.limit_solutions[SpeedLimitSource.map] = nav_speed_limit
       self.distance_solutions[SpeedLimitSource.map] = 0.
 
+  def _map_data_age(self, sm: messaging.SubMaster) -> float:
+    """Seconds since the planner received the last GPS and map messages, the older of the two, on the planner's own clock (time.monotonic(),
+    as SubMaster.recv_time). The GPS message's unixTimestampMillis is UTC wall time: against time.monotonic() it came out about -1.8e9 s,
+    so no map data was ever too old and an ahead limit was never within reach."""
+    now = time.monotonic()
+    return max(now - sm.recv_time[self._gps_location_service], now - sm.recv_time['liveMapDataSP'])
+
+  def _map_distance_ahead(self, sm: messaging.SubMaster) -> float:
+    """The distance to the start of the limit ahead now: mapd measured it from the position it had when it published."""
+    elapsed = time.monotonic() - sm.recv_time['liveMapDataSP']
+    return max(0., sm['liveMapDataSP'].speedLimitAheadDistance - self.v_ego * elapsed)
+
   def _process_map_data(self, sm: messaging.SubMaster) -> None:
-    gps_data = sm[self._gps_location_service]
     map_data = sm['liveMapDataSP']
 
-    gps_fix_age = time.monotonic() - gps_data.unixTimestampMillis * 1e-3
-    if gps_fix_age > LIMIT_MAX_MAP_DATA_AGE:
+    if self._map_data_age(sm) > LIMIT_MAX_MAP_DATA_AGE:
       return
 
     speed_limit = map_data.speedLimit if map_data.speedLimitValid else 0.
@@ -146,17 +156,13 @@ class SpeedLimitResolver:
     self._calculate_map_data_limits(sm, speed_limit, next_speed_limit)
 
   def _calculate_map_data_limits(self, sm: messaging.SubMaster, speed_limit: float, next_speed_limit: float) -> None:
-    gps_data = sm[self._gps_location_service]
-    map_data = sm['liveMapDataSP']
-
-    distance_since_fix = self.v_ego * (time.monotonic() - gps_data.unixTimestampMillis * 1e-3)
-    distance_to_speed_limit_ahead = max(0., map_data.speedLimitAheadDistance - distance_since_fix)
+    distance_to_speed_limit_ahead = self._map_distance_ahead(sm)
 
     self.limit_solutions[SpeedLimitSource.map] = speed_limit
     self.distance_solutions[SpeedLimitSource.map] = 0.
 
-    # FIXME-SP: this is not working as expected
-    if 0. < next_speed_limit < self.v_ego:
+    # only a lower limit ahead is taken early: a higher one starts where it starts
+    if 0. < next_speed_limit < self.v_ego and (speed_limit <= 0. or next_speed_limit < speed_limit):
       adapt_time = (next_speed_limit - self.v_ego) / LIMIT_ADAPT_ACC
       adapt_distance = self.v_ego * adapt_time + 0.5 * LIMIT_ADAPT_ACC * adapt_time ** 2
 
@@ -181,9 +187,12 @@ class SpeedLimitResolver:
     return SpeedLimitSource.none
 
   def _resolve_by_vote(self, sm: messaging.SubMaster) -> tuple[float, float, custom.LongitudinalPlanSP.SpeedLimit.Source]:
-    """Policy vote: the car's dash value, its nav value and OSM (without the nav stand-in), see speed_limit/vote.py."""
+    """Policy vote: the car's dash value, its nav value and OSM's current limit (without the nav stand-in or the upstream anticipation),
+    see speed_limit/vote.py."""
     self._reset_limit_sources(SpeedLimitSource.map)
-    self._process_map_data(sm)
+    map_data = sm['liveMapDataSP']
+    if map_data.speedLimitValid and self._map_data_age(sm) <= LIMIT_MAX_MAP_DATA_AGE:
+      self.limit_solutions[SpeedLimitSource.map] = map_data.speedLimit
     car_sp = sm['carStateSP']
     alive = sm.alive['carStateSP']
     dash = car_sp.speedLimit if alive else 0.
