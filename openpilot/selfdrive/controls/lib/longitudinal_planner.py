@@ -18,6 +18,7 @@ from openpilot.common.swaglog import cloudlog
 
 from openpilot.sunnypilot.selfdrive.controls.lib.gas_resume import GasResume
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerSP
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, DriverProfile
 
 J_CRUISE_VALS = [1.6, 1.2, 0.8, 0.6]
 J_CRUISE_BP = [0., 10.0, 25., 40.]
@@ -30,11 +31,6 @@ CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 V_DESIRED_BOUND_SPEED = 15.0
 V_DESIRED_BOUND_MARGIN = 0.0
 
-# Low-speed decel feed-forward: the car delivers only part of small decel requests, so scale the published decel
-# target by up to LOW_SPEED_DECEL_GAIN below LOW_SPEED_DECEL_SPEED (full gain one m/s below, linear ramp above).
-LOW_SPEED_DECEL_SPEED = 5.0
-LOW_SPEED_DECEL_GAIN = 1.15
-
 
 def get_cruise_accel(v_cruise, v_ego, a_cruise_prev, dt):
   target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, ACCEL_MAX)
@@ -45,14 +41,15 @@ def get_cruise_accel(v_cruise, v_ego, a_cruise_prev, dt):
 
 
 class LongitudinalPlanner(LongitudinalPlannerSP):
-  def __init__(self, CP, CP_SP, init_v=0.0, init_a=0.0, dt=DT_MDL):
+  def __init__(self, CP, CP_SP, init_v=0.0, init_a=0.0, dt=DT_MDL, profile: DriverProfile = DEFAULT_PROFILE):
     self.CP = CP
     self.mpc = LongitudinalMpc(dt=dt)
-    LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc)
+    LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc, profile)
     self.fcw = False
     self.dt = dt
     self.accel_boost = AccelBoost()
-    self.gas_resume = GasResume(dt)
+    self.gas_resume = GasResume(dt, profile.gas_resume)
+    self.soft_stop = profile.soft_stop
 
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
     self.a_cruise = init_a
@@ -72,10 +69,12 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
       self.v_desired_filter.x = max(self.v_desired_filter.x, v_ego - V_DESIRED_BOUND_MARGIN)
 
   def _low_speed_decel_gain(self, v_ego):
+    # Low-speed decel feed-forward: the car delivers only part of small decel requests, so scale the published decel target by up to
+    # DriverProfile.soft_stop.low_speed_decel_gain below low_speed_decel_speed_mps (full gain one m/s below, linear ramp above; 1.0 = off).
     if not self._soft_stop_fix():
       return 1.0
-    frac = np.clip((LOW_SPEED_DECEL_SPEED - v_ego) / 1.0, 0.0, 1.0)
-    return 1.0 + (LOW_SPEED_DECEL_GAIN - 1.0) * float(frac)
+    frac = np.clip((self.soft_stop.low_speed_decel_speed_mps - v_ego) / 1.0, 0.0, 1.0)
+    return 1.0 + (self.soft_stop.low_speed_decel_gain - 1.0) * float(frac)
 
   def update(self, sm):
     LongitudinalPlannerSP.update(self, sm)

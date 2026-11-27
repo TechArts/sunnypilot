@@ -13,6 +13,7 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.ui.sunnypilot.alert_bookmark import publish_alert_bookmark
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.display import OnroadBrightness
 from openpilot.sunnypilot.models.helpers import ACTIVE_BUNDLE_KEYS, get_active_source
+from openpilot.sunnypilot.selfdrive import driver_profile
 from openpilot.sunnypilot.sunnylink.sunnylink_state import SunnylinkState
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.sunnypilot.widgets.screen_saver import ScreenSaverSP
@@ -68,10 +69,16 @@ class UIStateSP:
     self.torque_override_enabled: bool = False
     self._sp_initialized: bool = False
     self.bookmark_pm: messaging.PubMaster | None = None  # set by the main layout, the UI's only userBookmark publisher
+    self.alert_bookmark: bool = driver_profile.DEFAULT_PROFILE.cues.bookmark  # DriverProfile.cues.bookmark, read once per drive
+    self._profile_started_frame = -1
 
   def update(self) -> None:
     if self.bookmark_pm is not None:
-      publish_alert_bookmark(self.sm, self.bookmark_pm)
+      if self.started and self._profile_started_frame != self.started_frame:
+        self.alert_bookmark = driver_profile.load(self.params, report=False).cues.bookmark
+        self._profile_started_frame = self.started_frame
+      if self.alert_bookmark:
+        publish_alert_bookmark(self.sm, self.bookmark_pm)
 
     if self.sunnylink_enabled:
       self.sunnylink_state.start()

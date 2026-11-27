@@ -18,6 +18,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.stop_cue import StopCueHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, DriverProfile
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 from openpilot.sunnypilot.models.helpers import get_active_bundle
 
@@ -25,18 +26,18 @@ LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 
 
 class LongitudinalPlannerSP:
-  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, mpc):
+  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, mpc, profile: DriverProfile = DEFAULT_PROFILE):
     self.events_sp = EventsSP()
-    self.resolver = SpeedLimitResolver()
+    self.resolver = SpeedLimitResolver(profile.speed_limit)
     self.scc = SmartCruiseControl()
-    self.resolver = SpeedLimitResolver()
+    self.resolver = SpeedLimitResolver(profile.speed_limit)
     self.sla = SpeedLimitAssist(CP, CP_SP)
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
     self.source = LongitudinalPlanSource.cruise
-    self.e2e_alerts_helper = E2EAlertsHelper()
-    self.red_light_alert_helper = RedLightAlertHelper(CP.openpilotLongitudinalControl)
-    self.stop_cue_helper = StopCueHelper(CP.openpilotLongitudinalControl)
-    self.over_speed_alert_helper = OverSpeedAlertHelper()
+    self.e2e_alerts_helper = E2EAlertsHelper(profile.green_light)
+    self.red_light_alert_helper = RedLightAlertHelper(CP.openpilotLongitudinalControl, profile.red_light)
+    self.stop_cue_helper = StopCueHelper(CP.openpilotLongitudinalControl, profile)
+    self.over_speed_alert_helper = OverSpeedAlertHelper(profile.over_speed)
     self.accel_boost_sp = AccelBoostSP()
     self.openpilot_longitudinal = CP.openpilotLongitudinalControl
     self._follow_prev = False

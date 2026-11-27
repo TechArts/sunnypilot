@@ -22,10 +22,11 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.car.cruise import IMPERIAL_INCREMENT, V_CRUISE_MAX
 from openpilot.sunnypilot.selfdrive.car.main_button_engage import main_button_engage
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, DriverProfile
 
 ButtonType = car.CarState.ButtonEvent.Type
 
-FREEWAY_LIMIT = {False: 55, True: 90}  # mph / km/h: a limit at or above it uses the freeway offset
+FREEWAY_LIMIT = {False: DEFAULT_PROFILE.speed_limit.freeway_min_mph, True: 90}  # mph / km/h: a limit at or above it uses the freeway offset
 OFFSET_RANGE = (-10, 25)  # displayed units
 OFFSET_PARAMS = {False: "SpeedLimitFollowOffsetStreet", True: "SpeedLimitFollowOffsetFreeway"}
 RESUME_BUTTONS = (ButtonType.accelCruise, ButtonType.resumeCruise)
@@ -34,10 +35,12 @@ SPEED_BUTTONS = {ButtonType.accelCruise: 1, ButtonType.resumeCruise: 1, ButtonTy
 
 
 class SpeedLimitFollow:
-  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params | None = None):
+  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params | None = None, profile: DriverProfile = DEFAULT_PROFILE):
     self.params = params or Params()
-    self.available = (main_button_engage(CP, CP_SP) and not CP.pcmCruise and
+    self.available = (profile.main_button.long_press == "speed_limit_follow" and main_button_engage(CP, CP_SP) and not CP.pcmCruise and
                       self.params.get("SpeedLimitMode", return_default=True) != Mode.assist)
+    # DriverProfile.speed_limit.freeway_min_mph: the freeway class with an imperial display; km/h keeps 90
+    self.freeway_limit = {False: profile.speed_limit.freeway_min_mph, True: FREEWAY_LIMIT[True]}
     self.offsets = {fw: int(self.params.get(OFFSET_PARAMS[fw], return_default=True)) for fw in (False, True)}
     self.follow = False  # following now (cruise engaged in this mode)
     self.resume_follow = False  # the last session followed: RES+ / pause key resume it
@@ -112,7 +115,7 @@ class SpeedLimitFollow:
     # set speeds on VCruiseHelper's own grid (whole km/h, or IMPERIAL_INCREMENT steps per mph), so its long-press rounding moves whole units
     unit_kph = 1. if is_metric else IMPERIAL_INCREMENT
     limit_u = round(resolver.speedLimitLast * (CV.MS_TO_KPH if is_metric else CV.MS_TO_MPH)) if resolver.speedLimitLastValid else 0
-    freeway = limit_u >= FREEWAY_LIMIT[is_metric]
+    freeway = limit_u >= self.freeway_limit[is_metric]
 
     # the driver's RES+ / SET- since our last set speed: an offset change, or the school-zone acceptance
     if self.applied_kph is not None and self.speed_button_dir and not CS.gasPressed:

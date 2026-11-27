@@ -8,6 +8,7 @@ from openpilot.common.realtime import Ratekeeper, DT_MDL, DT_CTRL
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, DriverProfile
 from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
 
 
@@ -23,7 +24,7 @@ class Plant:
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
                enabled=True, only_lead2=False, only_radar=False, personality=0, force_decel=False,
-               actuator_delivery=1.0, actuator_lag=0.0, car='honda', use_long_control=False):
+               actuator_delivery=1.0, actuator_lag=0.0, car='honda', use_long_control=False, profile: DriverProfile = DEFAULT_PROFILE):
     self.rate = 1. / DT_MDL
 
     if not Plant.messaging_initialized:
@@ -81,7 +82,7 @@ class Plant:
     if use_long_control:
       from openpilot.selfdrive.controls.lib.longcontrol import LongControl
       self.long_control = LongControl(CP, CP_SP)
-    self.planner = LongitudinalPlanner(CP, CP_SP, init_v=self.speed)
+    self.planner = LongitudinalPlanner(CP, CP_SP, init_v=self.speed, profile=profile)
 
   @property
   def current_time(self):

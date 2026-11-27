@@ -9,13 +9,14 @@ from openpilot.common.constants import CV
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, OverSpeed
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 
 # Audible over-speed alert: one chime when the car is faster than the resolved speed limit plus a margin.
-# Independent of cruise state; alert only.
-OVER_SPEED_HOLD_TIME = 2.0  # s, the car must stay over limit + margin this long before the chime
+# Independent of cruise state; alert only. The timings are DriverProfile.over_speed (driver_profile.py); the names below are its defaults.
+OVER_SPEED_HOLD_TIME = DEFAULT_PROFILE.over_speed.hold_s  # s, the car must stay over limit + margin this long before the chime
 LIMIT_CHANGE_EPS = 0.05  # m/s, a different limit
-OVER_SPEED_REARM_CLEAR_TIME = 5.0  # s, it must stay at or below limit + margin this long to re-arm
+OVER_SPEED_REARM_CLEAR_TIME = DEFAULT_PROFILE.over_speed.rearm_clear_s  # s, it must stay at or below limit + margin this long to re-arm
 
 
 def over_speed_margin_ms(margin: int, is_metric: bool) -> float:
@@ -74,10 +75,10 @@ class OverSpeedAlert:
 
 
 class OverSpeedAlertHelper:
-  def __init__(self):
+  def __init__(self, cfg: OverSpeed = DEFAULT_PROFILE.over_speed):
     self._params = Params()
     self.frame = -1
-    self.alert = OverSpeedAlert()
+    self.alert = OverSpeedAlert(cfg.hold_s, cfg.rearm_clear_s)
     self.margin = 0
     self.is_metric = False
     self.over_speed_alert = False

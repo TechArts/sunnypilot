@@ -4,19 +4,22 @@
 Prints, per (delivery, lag) row and approach speed: final gap, min gap, max (real - planner speed) over the last
 8 m, min request and max |jerk| below 5 m/s, and the time from 1 m/s to standstill.
 """
+import dataclasses
+
 import numpy as np
 
 from openpilot.selfdrive.test.longitudinal_maneuvers.plant import Plant
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE
 
 ROWS = [(1.0, 0.0), (0.97, 0.2), (0.88, 0.6), (0.80, 0.7)]
 SPEEDS = [5., 10., 15.]
 LEAD_DISTANCE = 6.0 + 10.0 * 15.0 + 20.0  # far enough for the planner to settle at 15 m/s
 
 
-def run(speed, delivery, lag, duration=60.0):
+def run(speed, delivery, lag, duration=60.0, profile=DEFAULT_PROFILE):
   kw = dict(car='gv70', use_long_control=True)
   d0 = LEAD_DISTANCE if speed >= 10 else 80.0
-  plant = Plant(lead_relevancy=True, speed=speed, distance_lead=d0, actuator_delivery=delivery, actuator_lag=lag, **kw)
+  plant = Plant(lead_relevancy=True, speed=speed, distance_lead=d0, actuator_delivery=delivery, actuator_lag=lag, profile=profile, **kw)
   gaps, vs, vps, reqs, ts_ = [], [], [], [], []
   while plant.current_time < duration:
     log = plant.step(0.0, 1.0, 50.)
@@ -41,7 +44,7 @@ def run(speed, delivery, lag, duration=60.0):
               jerk=float(jerk[low[1:]].max()) if low[1:].any() else float('nan'), t1=t_stop)
 
 
-VARIANTS = {  # (V_DESIRED_BOUND_SPEED, LOW_SPEED_DECEL_GAIN); the shipped planner constants are the A+B row
+VARIANTS = {  # (V_DESIRED_BOUND_SPEED, low_speed_decel_gain); None = the shipped value (the A+B row)
   'baseline': (0.0, 1.0),
   'A': (None, 1.0),
   'A+B': (None, None),
@@ -50,22 +53,23 @@ VARIANTS = {  # (V_DESIRED_BOUND_SPEED, LOW_SPEED_DECEL_GAIN); the shipped plann
 
 def study(variant='A+B'):
   import openpilot.selfdrive.controls.lib.longitudinal_planner as lp
-  shipped = (lp.V_DESIRED_BOUND_SPEED, lp.LOW_SPEED_DECEL_GAIN)
+  shipped_bound = lp.V_DESIRED_BOUND_SPEED
   bound, gain = VARIANTS[variant]
-  lp.V_DESIRED_BOUND_SPEED = shipped[0] if bound is None else bound
-  lp.LOW_SPEED_DECEL_GAIN = shipped[1] if gain is None else gain
+  lp.V_DESIRED_BOUND_SPEED = shipped_bound if bound is None else bound
+  soft_stop = DEFAULT_PROFILE.soft_stop if gain is None else dataclasses.replace(DEFAULT_PROFILE.soft_stop, low_speed_decel_gain=gain)
+  profile = dataclasses.replace(DEFAULT_PROFILE, soft_stop=soft_stop)
   out = {}
   try:
-    print(f"== {variant}: bound speed {lp.V_DESIRED_BOUND_SPEED}, decel gain {lp.LOW_SPEED_DECEL_GAIN}")
+    print(f"== {variant}: bound speed {lp.V_DESIRED_BOUND_SPEED}, decel gain {soft_stop.low_speed_decel_gain}")
     print(f"{'deliv':>5} {'lag':>4} {'v0':>3} {'final':>6} {'min':>6} {'drift':>6} {'minreq':>7} {'jerk':>6} {'t1->0':>6}")
     for delivery, lag in ROWS:
       for v in SPEEDS:
-        r = run(v, delivery, lag)
+        r = run(v, delivery, lag, profile=profile)
         out[(delivery, lag, v)] = r
         print(f"{delivery:5.2f} {lag:4.1f} {v:3.0f} {r['final']:6.2f} {r['min']:6.2f} {r['drift']:6.2f} "
               f"{r['minreq']:7.2f} {r['jerk']:6.2f} {r['t1']:6.1f}")
   finally:
-    lp.V_DESIRED_BOUND_SPEED, lp.LOW_SPEED_DECEL_GAIN = shipped
+    lp.V_DESIRED_BOUND_SPEED = shipped_bound
   return out
 
 

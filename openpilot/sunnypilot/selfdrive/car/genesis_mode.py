@@ -6,10 +6,11 @@ See the LICENSE.md file in the root directory for more details.
 """
 from opendbc.car import structs
 from openpilot.common.realtime import DT_CTRL
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, WheelButton
 
 GearShifter = structs.CarState.GearShifter
 
-HOLD_TIME = 1.0  # s the programmable wheel button must be held; a short press keeps the button's own Genesis function
+HOLD_TIME = DEFAULT_PROFILE.wheel_button.hold_s  # s, default hold (DriverProfile.wheel_button.hold_s); a short press keeps the button's own function
 RELEASE_TIME = 0.5  # s released before a hold counts: > 2 SWRC_01 periods (~5 Hz), so a button held through card's restart never re-arms
 STANDSTILL_SPEED = 0.1  # m/s
 GENESIS_MODE_CARS = ("GENESIS_GV70_2ND_GEN",)  # the button meaning (SWRC_01 Audio_CustomSw3Sta) is only verified on this car
@@ -21,11 +22,12 @@ class GenesisModeButton:
   car's own SCC, LFA, HDA and FCA run while the comma records. It flips OpenpilotEnabledToggle and requests an onroad cycle (the settings toggle's
   own path: hardwared drops onroad for ~1 s and card restarts with the new value).
 
-  One switch per hold: the press must start and reach HOLD_TIME in Park, at standstill, with openpilot not engaged; leaving Park, moving or
+  One switch per hold: the press must start and reach the hold time in Park, at standstill, with openpilot not engaged; leaving Park, moving or
   engaging during the hold cancels it until the button is released. A new card (after the restart) only arms once the button has been released
-  for RELEASE_TIME."""
-  def __init__(self, CP: structs.CarParams, params):
-    self.active = CP.carFingerprint in GENESIS_MODE_CARS
+  for RELEASE_TIME. Only with DriverProfile.wheel_button.long_press "genesis_mode"; the Park / standstill / not-engaged conditions are fixed."""
+  def __init__(self, CP: structs.CarParams, params, cfg: WheelButton = DEFAULT_PROFILE.wheel_button):
+    self.active = CP.carFingerprint in GENESIS_MODE_CARS and cfg.long_press == "genesis_mode"
+    self.hold_time = cfg.hold_s
     self.params = params
     self.held_frames = 0
     self.released_frames = 0
@@ -49,7 +51,7 @@ class GenesisModeButton:
       return False
 
     self.held_frames += 1
-    if self.held_frames * DT_CTRL < HOLD_TIME:
+    if self.held_frames * DT_CTRL < self.hold_time:
       return False
 
     self.blocked = True

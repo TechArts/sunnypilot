@@ -27,6 +27,7 @@ from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfac
 from openpilot.sunnypilot.selfdrive.car.pause_resume import PauseResumeKey, panda_fault
 from openpilot.sunnypilot.selfdrive.car.genesis_mode import GenesisModeButton
 from openpilot.sunnypilot.selfdrive.car.speed_limit_follow import SpeedLimitFollow
+from openpilot.sunnypilot.selfdrive import driver_profile
 
 REPLAY = "REPLAY" in os.environ
 
@@ -180,8 +181,9 @@ class Car:
 
     self.v_cruise_helper = VCruiseHelper(self.CP, self.CP_SP)
     self.pause_resume = PauseResumeKey(self.CP, self.CP_SP)
-    self.genesis_mode = GenesisModeButton(self.CP, self.params)
-    self.speed_limit_follow = SpeedLimitFollow(self.CP, self.CP_SP, self.params)
+    profile = driver_profile.load(self.params)
+    self.genesis_mode = GenesisModeButton(self.CP, self.params, profile.wheel_button)
+    self.speed_limit_follow = SpeedLimitFollow(self.CP, self.CP_SP, self.params, profile)
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
