@@ -173,28 +173,19 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
     sm_mock.recv_time['liveMapDataSP'] = time.monotonic() - map_age
     return sm_mock
 
-  def test_lower_limit_ahead_within_the_adapt_distance(self, resolver_class, mocker):
-    # 55 -> 50 at 73 mph (route 91, Pearblossom Hwy): adapt distance at LIMIT_ADAPT_ACC (v^2 - v_next^2) / 2 = 283 m
+  @parameterized.expand([(p, ahead) for p in (Policy.map_data_only, Policy.map_data_priority, Policy.combined) for ahead in (50, 65)],
+                        names=["policy", "ahead_mph"])
+  def test_upstream_policies_keep_the_current_osm_limit(self, resolver_class, policy, ahead_mph, mocker):
+    # policies 0-4 with the age fixed: OSM's current 55 and distance 0 all the way to a lower (or higher) limit ahead, frame after frame
     resolver = resolver_class()
-    resolver.policy = Policy.map_data_only
-    v_ego = 73 * CV.MPH_TO_MS
-    resolver.update(v_ego, self._ahead_sm(mocker, 55, 50, 300.))
-    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 55 and resolver.distance == 0.
-    resolver.update(v_ego, self._ahead_sm(mocker, 55, 50, 250.))
-    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 50 and 245. < resolver.distance <= 250.
-
-  def test_distance_ahead_counts_the_travel_since_the_map_message(self, resolver_class, mocker):
-    # mapd measured 300 m one second ago at 32.6 m/s: 267 m now, inside the 283 m adapt distance
-    resolver = resolver_class()
-    resolver.policy = Policy.map_data_only
-    resolver.update(73 * CV.MPH_TO_MS, self._ahead_sm(mocker, 55, 50, 300., map_age=1.))
-    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 50 and 265. < resolver.distance < 269.
-
-  def test_higher_limit_ahead_is_not_taken_early(self, resolver_class, mocker):
-    resolver = resolver_class()
-    resolver.policy = Policy.map_data_only
-    resolver.update(50 * CV.MPH_TO_MS, self._ahead_sm(mocker, 35, 45, 5.))
-    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 35 and resolver.distance == 0.
+    resolver.policy = policy
+    mocker.patch.object(resolver, 'update_params')  # keep the policy: the periodic refresh reads SpeedLimitPolicy from Params
+    for distance in range(300, 0, -5):
+      sm_mock = self._ahead_sm(mocker, 55, ahead_mph, float(distance))
+      sm_mock['carStateSP'].speedLimit = 55 * CV.MPH_TO_MS
+      resolver.update(60 * CV.MPH_TO_MS, sm_mock)
+      assert round(resolver.speed_limit * CV.MS_TO_MPH) == 55 and resolver.distance == 0., distance
+    assert resolver.policy == policy
 
   def test_vote_reads_the_current_osm_limit(self, resolver_class, mocker):
     # the upstream anticipation must not reach the vote as OSM's limit: car and OSM 65, OSM 55 ahead in 50 m

@@ -13,7 +13,7 @@ from openpilot.common.gps import get_gps_location_service
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD, get_sanitize_int_param
-from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE, LIMIT_ADAPT_ACC
+from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.vote import SpeedLimitVote
 from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE, SpeedLimit
@@ -145,30 +145,13 @@ class SpeedLimitResolver:
     return max(0., sm['liveMapDataSP'].speedLimitAheadDistance - self.v_ego * elapsed)
 
   def _process_map_data(self, sm: messaging.SubMaster) -> None:
+    """Policies 0-4: OSM's current limit, distance 0. Upstream's anticipation of the limit ahead is gone: it never ran (the age was wrong by
+    -1.8e9 s), and with a right age it re-decided from the current speed every frame, flipping back to the current limit as the car slowed."""
     map_data = sm['liveMapDataSP']
-
     if self._map_data_age(sm) > LIMIT_MAX_MAP_DATA_AGE:
       return
-
-    speed_limit = map_data.speedLimit if map_data.speedLimitValid else 0.
-    next_speed_limit = map_data.speedLimitAhead if map_data.speedLimitAheadValid else 0.
-
-    self._calculate_map_data_limits(sm, speed_limit, next_speed_limit)
-
-  def _calculate_map_data_limits(self, sm: messaging.SubMaster, speed_limit: float, next_speed_limit: float) -> None:
-    distance_to_speed_limit_ahead = self._map_distance_ahead(sm)
-
-    self.limit_solutions[SpeedLimitSource.map] = speed_limit
+    self.limit_solutions[SpeedLimitSource.map] = map_data.speedLimit if map_data.speedLimitValid else 0.
     self.distance_solutions[SpeedLimitSource.map] = 0.
-
-    # only a lower limit ahead is taken early: a higher one starts where it starts
-    if 0. < next_speed_limit < self.v_ego and (speed_limit <= 0. or next_speed_limit < speed_limit):
-      adapt_time = (next_speed_limit - self.v_ego) / LIMIT_ADAPT_ACC
-      adapt_distance = self.v_ego * adapt_time + 0.5 * LIMIT_ADAPT_ACC * adapt_time ** 2
-
-      if distance_to_speed_limit_ahead <= adapt_distance:
-        self.limit_solutions[SpeedLimitSource.map] = next_speed_limit
-        self.distance_solutions[SpeedLimitSource.map] = distance_to_speed_limit_ahead
 
   def _get_source_solution_according_to_policy(self) -> custom.LongitudinalPlanSP.SpeedLimit.Source:
     sources_for_policy = self._policy_to_sources_map[Policy(self.policy)]
