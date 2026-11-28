@@ -78,6 +78,7 @@ class VoteResult:
   from_map: bool
   school: bool
   distance: float = 0.  # m to the start of the limit when it is a lower one ahead taken early (not in force yet), else 0
+  in_force: float = 0.  # m/s, the limit in force now: the one before that lower limit until its start, else the limit
 
 
 def _units(v: float, u: Units) -> int | None:
@@ -205,5 +206,7 @@ class SpeedLimitVote:
           self.base, self.base_from_map = cand, from_map
         self.pending, self.pending_time = None, 0.
 
+    limit = self.applied * u.to_ms if self.applied else 0.
     distance = self.ahead_distance if self.ahead is not None and self.applied == self.ahead[0] and not self.applied_school else 0.
-    return VoteResult(self.applied * u.to_ms if self.applied else 0., self.applied_from_map, self.applied_school, distance)
+    in_force = self.ahead[1] * u.to_ms if distance > 0. and self.ahead is not None else limit
+    return VoteResult(limit, self.applied_from_map, self.applied_school, distance, in_force)

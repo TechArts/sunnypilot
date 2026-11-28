@@ -72,7 +72,8 @@ class SpeedLimitResolver:
     self.offset_value = self.params.get("SpeedLimitValueOffset", return_default=True)
 
     self.speed_limit = 0.
-    self.distance = 0.  # read by the over-speed alert on the planner's first cycle, before the first update()
+    self.distance = 0.
+    self.speed_limit_in_force = 0.  # the limit that applies now (the over-speed alert's), read on the planner's first cycle before update()
     self.speed_limit_last = 0.
     self.speed_limit_final = 0.
     self.speed_limit_final_last = 0.
@@ -187,6 +188,7 @@ class SpeedLimitResolver:
     result = self._vote.update(dash, nav, self.limit_solutions[SpeedLimitSource.map], alive and car_sp.speedLimitSchoolSign,
                                self.v_ego, self.is_metric, ahead=ahead, ahead_dist=ahead_dist)
     self.school_zone = result.school
+    self.speed_limit_in_force = result.in_force
     if result.limit <= 0.:
       return 0., 0., SpeedLimitSource.none
     return result.limit, result.distance, SpeedLimitSource.map if result.from_map else SpeedLimitSource.car
@@ -202,6 +204,7 @@ class SpeedLimitResolver:
     source = self._get_source_solution_according_to_policy()
     speed_limit = self.limit_solutions[source] if source else 0.
     distance = self.distance_solutions[source] if source else 0.
+    self.speed_limit_in_force = speed_limit
 
     return speed_limit, distance, source
 

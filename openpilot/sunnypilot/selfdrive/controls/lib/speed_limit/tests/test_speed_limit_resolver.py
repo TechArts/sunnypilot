@@ -212,6 +212,7 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
     resolver = self._vote_ahead(mocker, 600.)  # inside the 819 m openpilot needs from 79 mph at 0.5 m/s^2
     assert round(resolver.speed_limit * CV.MS_TO_MPH) == 50 and resolver.source == SpeedLimitSource.map
     assert 600. - 79 * CV.MPH_TO_MS * 0.6 < resolver.distance < 600. - 79 * CV.MPH_TO_MS * 0.4  # the travel since the map message
+    assert round(resolver.speed_limit_in_force * CV.MS_TO_MPH) == 55  # the over-speed alert keeps the 55 until the start
     resolver = self._vote_ahead(mocker, 1000.)
     assert round(resolver.speed_limit * CV.MS_TO_MPH) == 55 and resolver.distance == 0.
 
