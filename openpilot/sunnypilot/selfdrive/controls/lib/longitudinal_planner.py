@@ -84,7 +84,7 @@ class LongitudinalPlannerSP:
     self.e2e_alerts_helper.update(sm, self.events_sp)
     self.red_light_alert_helper.update(sm, self.events_sp)
     self.stop_cue_helper.update(sm, self.events_sp)
-    self.over_speed_alert_helper.update(sm, self.resolver.speed_limit, self.resolver.distance, self.events_sp)
+    self.over_speed_alert_helper.update(sm, self.resolver.speed_limit_in_force, self.events_sp)
     self.update_speed_limit_follow_events(sm)
 
   def update_speed_limit_follow_events(self, sm: messaging.SubMaster) -> None:

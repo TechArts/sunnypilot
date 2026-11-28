@@ -24,11 +24,6 @@ def over_speed_margin_ms(margin: int, is_metric: bool) -> float:
   return margin * (CV.KPH_TO_MS if is_metric else CV.MPH_TO_MS)
 
 
-def current_speed_limit(speed_limit: float, distance: float) -> float:
-  """The limit that applies now. The resolver's anticipatory limit (an upcoming, lower one it adapts to) carries a distance ahead: not yet in force."""
-  return speed_limit if distance <= 0. else 0.
-
-
 def over_speed(v_ego: float, speed_limit: float, margin_ms: float) -> bool:
   """Over limit + margin. No valid limit: never."""
   return speed_limit > 0. and v_ego > speed_limit + margin_ms
@@ -88,11 +83,12 @@ class OverSpeedAlertHelper:
     self.margin = int(self._params.get("SpeedLimitOverSpeedAlert", return_default=True))
     self.is_metric = self._params.get_bool("IsMetric")
 
-  def update(self, sm: messaging.SubMaster, speed_limit: float, distance: float, events_sp: EventsSP) -> None:
+  def update(self, sm: messaging.SubMaster, speed_limit: float, events_sp: EventsSP) -> None:
+    """speed_limit: the limit in force now (SpeedLimitResolver.speed_limit_in_force, not a lower one ahead it is already slowing for)."""
     if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
       self._read_params()
     self.frame += 1
 
-    self.over_speed_alert = self.alert.step(sm['carState'].vEgo, current_speed_limit(speed_limit, distance), self.margin, self.is_metric)
+    self.over_speed_alert = self.alert.step(sm['carState'].vEgo, speed_limit, self.margin, self.is_metric)
     if self.over_speed_alert:
       events_sp.add(custom.OnroadEventSP.EventName.overSpeedAlert)

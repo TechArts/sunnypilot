@@ -139,6 +139,7 @@ class FakeSM:
   def __init__(self, msgs, mono):
     self.msgs = msgs
     self.logMonoTime = mono
+    self.recv_time = collections.defaultdict(float)  # 0: the speed-limit resolver takes the (empty) map data as stale
     self.updated = collections.defaultdict(lambda: True)
     self.valid = collections.defaultdict(lambda: True)
     self.alive = collections.defaultdict(lambda: True)

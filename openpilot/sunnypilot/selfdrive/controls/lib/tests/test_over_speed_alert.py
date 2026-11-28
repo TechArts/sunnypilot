@@ -6,13 +6,15 @@ See the LICENSE.md file in the root directory for more details.
 """
 import unittest
 from types import SimpleNamespace
+from typing import cast
 from unittest import mock
 
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
+from openpilot.cereal import messaging
 from openpilot.sunnypilot.selfdrive.controls.lib import over_speed_alert
 from openpilot.sunnypilot.selfdrive.controls.lib.over_speed_alert import (
-  OverSpeedAlert, OverSpeedAlertHelper, current_speed_limit, over_speed, over_speed_margin_ms, OVER_SPEED_HOLD_TIME, OVER_SPEED_REARM_CLEAR_TIME)
+  OverSpeedAlert, OverSpeedAlertHelper, over_speed, over_speed_margin_ms, OVER_SPEED_HOLD_TIME, OVER_SPEED_REARM_CLEAR_TIME)
 
 LIMIT = 35 * CV.MPH_TO_MS
 HOLD = round(OVER_SPEED_HOLD_TIME / DT_MDL)
@@ -116,11 +118,7 @@ class TestOverSpeedAlert(unittest.TestCase):
     self.assertFalse(any(out[:HOLD - 1]))
     self.assertTrue(out[HOLD - 1])
 
-  def test_upcoming_limit_ahead_is_ignored(self):
-    self.assertEqual(current_speed_limit(25 * CV.MPH_TO_MS, 120.), 0.)
-    self.assertEqual(current_speed_limit(25 * CV.MPH_TO_MS, 0.), 25 * CV.MPH_TO_MS)
-
-  def test_helper_no_chime_until_upcoming_limit_applies(self):
+  def test_helper_uses_the_limit_in_force_while_a_lower_one_is_ahead(self):
     class FakeParams:
       def get(self, key, return_default=False):
         return 10 if key == "SpeedLimitOverSpeedAlert" else 0
@@ -130,14 +128,24 @@ class TestOverSpeedAlert(unittest.TestCase):
 
     with mock.patch.object(over_speed_alert, "Params", FakeParams):
       helper = OverSpeedAlertHelper()
-    events = mock.Mock()
-    sm = {'carState': SimpleNamespace(vEgo=40 * CV.MPH_TO_MS)}
     lim40, lim25 = 40 * CV.MPH_TO_MS, 25 * CV.MPH_TO_MS
-    for _ in range(3 * HOLD):  # 25 mph limit ahead (anticipatory, distance > 0), still in a 40 zone
-      helper.update(sm, lim25, 100., events)
+    def sm_at(mph):  # the helper reads only sm['carState'].vEgo
+      return cast(messaging.SubMaster, {'carState': SimpleNamespace(vEgo=mph * CV.MPH_TO_MS)})
+    at40, at52 = sm_at(40), sm_at(52)
+    # a 25 ahead the vote already slows for: the 40 is in force until its start; 40 mph is fine there
+    events = mock.Mock()
+    for _ in range(3 * HOLD):
+      helper.update(at40, lim40, events)
     events.add.assert_not_called()
-    for _ in range(HOLD):  # it applies now
-      helper.update(sm, lim25, 0., events)
+    for _ in range(HOLD):  # the 25 applies now
+      helper.update(at40, lim25, events)
+    events.add.assert_called_once()
+    # speeding over the 40 during the approach still chimes
+    with mock.patch.object(over_speed_alert, "Params", FakeParams):
+      helper = OverSpeedAlertHelper()
+    events = mock.Mock()
+    for _ in range(HOLD):
+      helper.update(at52, lim40, events)
     events.add.assert_called_once()
 
 

@@ -13,10 +13,15 @@ from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
 
 
 class _PlantSM(dict):
-  """The planner's inputs as a dict, plus SubMaster's `alive`: every simulated service counts as alive."""
+  """The planner's inputs as a dict, plus SubMaster's `alive` (every simulated service counts as alive) and `recv_time` (0: the speed-limit
+  resolver takes the simulated map data as stale)."""
   @property
   def alive(self):
     return dict.fromkeys(self, True)
+
+  @property
+  def recv_time(self):
+    return dict.fromkeys(self, 0.)
 
 
 class Plant:
