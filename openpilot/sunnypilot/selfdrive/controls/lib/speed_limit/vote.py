@@ -54,7 +54,8 @@ LIMIT_AHEAD_LAG = 2.  # s at speed before openpilot slows: the vote's DROP_HOLD 
 LIMIT_STEP = 5  # posted limits are multiples of 5 (mph and km/h); OSM's "37" (a 60 km/h tag read as mph, route 91) is not one
 LIMIT_AHEAD_NEAR = 25.  # m: the start OSM reported is reached; before it the distance may grow back this much (more: a cross street, route 92)
 LIMIT_AHEAD_OSM_LATE = 150.  # m past the reported start OSM's own limit may still be the old one (it switched 15-73 m past it on the port routes)
-LIMIT_AHEAD_CONFIRM = 400.  # m past the reported start the car's own limit may still be the old one (route 84: OSM 73 m late, the nav 228 m later)
+LIMIT_AHEAD_CONFIRM = 400.  # m past the start the car's own limit may still be the old one (route 84: OSM 73 m late, the nav 228 m later); counted
+                            # from the car's own travel since the limit was taken, so a frozen GPS position (mapd repeating its distance) ends it too
 
 
 @dataclass(frozen=True)
@@ -130,7 +131,10 @@ class SpeedLimitVote:
     self.ahead: tuple[int, int] | None = None  # (OSM's lower limit ahead, the limit before it) being slowed for
     self.ahead_distance = 0.  # m to its start, 0 once reached
     self.ahead_closest = 0.  # m, the shortest distance to its start so far
-    self.ahead_past = 0.  # m since its start was reached
+    self.ahead_past = 0.  # m since its start was reached (by mapd's distance)
+    self.ahead_start = 0.  # m to its start when it was taken
+    self.ahead_travel = 0.  # m the car has gone since it was taken (its own speed, whatever mapd reports)
+    self.ahead_osm_low = False  # OSM's own limit has been the lower one
     self.ahead_dropped: tuple[int, int] | None = None  # the (ahead, current) pair last let go: not taken again while OSM reports the same
 
   def _start_distance(self, v_ego: float, limit: float) -> float:
@@ -145,20 +149,22 @@ class SpeedLimitVote:
       if o == before and a == low:
         grew = ahead_dist > self.ahead_closest + LIMIT_AHEAD_NEAR
         self.ahead_closest = min(self.ahead_closest, ahead_dist)
-      reached = o == low or self.ahead_closest <= LIMIT_AHEAD_NEAR
+      self.ahead_osm_low = self.ahead_osm_low or o == low
+      reached = self.ahead_osm_low or self.ahead_closest <= LIMIT_AHEAD_NEAR
       if reached:
         self.ahead_past += v_ego * self.dt
+      self.ahead_travel += v_ego * self.dt
       self.ahead_distance = 0. if reached else ahead_dist
       if car not in (before, low) or o not in (before, low):
         keep = False  # the car's limit or OSM's went elsewhere (or OSM is stale / missing)
+      elif self.ahead_travel > self.ahead_start + LIMIT_AHEAD_CONFIRM:
+        keep = False  # the car never confirmed it, or mapd's distance is frozen (no GPS fix)
       elif o == before:
-        # before the start: OSM still has it ahead (not after a turn onto another road) and the car is heading for it (not a cross street);
-        # past it: OSM's own limit has a little while to follow
-        keep = self.ahead_past <= LIMIT_AHEAD_OSM_LATE if reached else (a == low and not grew)
+        # OSM's lower stretch is over; before the start: OSM still has it ahead (not after a turn onto another road) and the car is heading for
+        # it (not a cross street); past it: OSM's own limit has a little while to follow
+        keep = not self.ahead_osm_low and (self.ahead_past <= LIMIT_AHEAD_OSM_LATE if reached else (a == low and not grew))
       else:
-        # OSM's own limit is the lower one: until the car has it too (the plain vote takes it then), unless the car never confirms it or
-        # the lower stretch ends before it could
-        keep = car != low and self.ahead_past <= LIMIT_AHEAD_CONFIRM and not (a is not None and a > low and ahead_dist < LIMIT_AHEAD_CONFIRM)
+        keep = car != low  # OSM's own limit is the lower one: until the car has it too (the plain vote takes it then)
       if not keep:
         self.ahead, self.ahead_dropped = None, self.ahead
     if self.ahead_dropped != (a, o):
@@ -166,6 +172,7 @@ class SpeedLimitVote:
     if (self.ahead is None and self.ahead_dropped is None and self.ahead_decel > 0. and a is not None and o is not None and car == o
         and u.school_max < a < o and o - a <= u.big_drop and a % LIMIT_STEP == 0 and 0. < ahead_dist <= self._start_distance(v_ego, a * u.to_ms)):
       self.ahead, self.ahead_distance, self.ahead_closest, self.ahead_past = (a, o), ahead_dist, ahead_dist, 0.
+      self.ahead_start, self.ahead_travel, self.ahead_osm_low = ahead_dist, 0., False
     return self.ahead[0] if self.ahead is not None else None
 
   def update(self, dash: float, nav: float, osm: float, school_sign: bool, v_ego: float, is_metric: bool,

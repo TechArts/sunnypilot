@@ -175,7 +175,7 @@ class TestLimitAhead:
   def test_never_confirmed_by_the_car_goes_back(self):
     v = SpeedLimitVote(DT_MDL)
     self.approach(v)
-    frames, _ = drive(v, (LIMIT_AHEAD_CONFIRM + 100.) / ms(79), 55, 50, 79)
+    frames, _ = drive(v, (LIMIT_AHEAD_CONFIRM + 200.) / ms(79), 55, 50, 79)
     assert frames[0][0] == 50 and frames[-1][0] == 55  # the vote's own rule then: the car's 55 over OSM's 50
 
   def test_never_raised_early(self):
@@ -211,8 +211,11 @@ class TestLimitAhead:
     run(v, 1, 40, 40, 40, 40, now=SUNDAY)
     drive(v, 2, 40, 40, 40, 35, 60., now=SUNDAY)
     assert run(v, 5, 25, 25, 40, 38, now=SUNDAY) == (40, False)  # a school zone out of hours still keeps the street's 40
+    # in school hours, OSM's 25 ahead is not taken early; the car's 25 at the zone is the school-zone limit
     v = SpeedLimitVote(DT_MDL)
     run(v, 1, 40, 40, 40, 40)
+    frames, _ = drive(v, 3, 40, 40, 40, 25, 100.)
+    assert all(f[:2] == (40, 0.) for f in frames) and v.ahead is None
     assert run(v, 1.1, 25, 25, 40, 38) == (25, True)
 
   def test_cross_street_start_is_let_go(self):
@@ -223,6 +226,9 @@ class TestLimitAhead:
     assert v.ahead is not None
     drive(v, 2, 40, 40, 40, 35, 84., closing=False)  # 120 m and growing: not on the car's way
     assert v.ahead is None and v.ahead_dropped == (35, 40)
+    frames, _ = drive(v, 4, 40, 40, 40, 35, 100.)  # the same pair again, the distance shrinking: not taken again
+    first_40 = next(i for i, f in enumerate(frames) if f[0] == 40)  # back to 40 after the raise hold, and stays there
+    assert v.ahead is None and all(f[0] == 40 for f in frames[first_40:])
 
   def test_passing_the_start_before_osm_switches(self):
     # route 84 Chino Valley Fwy: OSM's distance bottoms out at 3 m, grows again and OSM's own limit switches 73 m after its start
@@ -233,12 +239,47 @@ class TestLimitAhead:
     frames2, _ = drive(v, 200. / ms(60), 65, 55, 60, 65, 2300.)  # OSM 55 now, 65 again 2.3 km on; the nav still 65
     assert all(f[0] == 55 for f in frames + frames2)
 
-  def test_short_lower_stretch_is_let_go(self):
+  def test_short_lower_stretch_is_held_until_osm_leaves_it(self):
     v = SpeedLimitVote(DT_MDL)
     run(v, 1, 40, 40, 40, 30)
     drive(v, 3, 40, 40, 30, 35, 40.)
-    frames, _ = drive(v, 3, 40, 35, 30, 40, 30.)  # OSM 35, but 40 again in 30 m: the car could never confirm it
+    frames, _ = drive(v, 3, 40, 35, 30, 40, 30.)  # OSM 35, 40 again in 30 m, the car still 40: kept for the stretch
+    assert all(f[0] == 35 for f in frames) and v.ahead is not None
+    frames, _ = drive(v, 3, 40, 40, 30)  # OSM's stretch is over
     assert v.ahead is None and frames[-1][0] == 40
+
+  def test_lower_stretch_then_higher_while_the_nav_lags(self):
+    # 45 road, a 40 zone from 1000 to 1250 m, the nav 150 m late at both ends: one drop, one raise, never back up inside the zone
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 45, 45, 45, 45)
+    out = drive(v, 1005. / ms(45), 45, 45, 45, 40, 1000.)[0]  # to the start
+    out += drive(v, 150. / ms(45), 45, 40, 45, 45, 250.)[0]  # OSM 40, the nav still 45
+    out += drive(v, 100. / ms(45), 40, 40, 45, 45, 100.)[0]  # the nav 40 too
+    out += drive(v, 150. / ms(45), 40, 45, 45)[0]  # OSM 45 at the zone's end, the nav still 40
+    out += drive(v, 3, 45, 45, 45)[0]
+    limits = [f[0] for f in out]
+    changes = [b for a, b in zip(limits, limits[1:], strict=False) if a != b]
+    assert changes == [40, 45], changes
+
+  def test_frozen_gps_distance_is_let_go(self):
+    # no fix: mapd repeats the distance from the last position, the car keeps going; let go after the start plus LIMIT_AHEAD_CONFIRM of travel
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 55, 55, 55, 79)
+    frames = [v.update(ms(55), ms(55), ms(55), False, ms(79), False, WEEKDAY_SCHOOL, ms(50), 300.) for _ in range(round(30. / DT_MDL))]
+    limits = [round(r.limit * CV.MS_TO_MPH) for r in frames]
+    taken_for = sum(lim == 50 for lim in limits) * DT_MDL * ms(79)
+    assert limits[-1] == 55 and v.ahead is None and 300. + LIMIT_AHEAD_CONFIRM - 50. < taken_for < 300. + LIMIT_AHEAD_CONFIRM + 50.
+
+  def test_limit_in_force_until_the_start(self):
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 55, 55, 55, 79)
+    r = None
+    for _ in range(round(2. / DT_MDL)):
+      r = v.update(ms(55), ms(55), ms(55), False, ms(79), False, WEEKDAY_SCHOOL, ms(50), 600.)
+    assert r is not None and round(r.limit * CV.MS_TO_MPH) == 50 and r.distance == 600.
+    assert round(r.in_force * CV.MS_TO_MPH) == 55  # the over-speed alert's limit until the start
+    r = v.update(ms(55), ms(55), ms(50), False, ms(79), False, WEEKDAY_SCHOOL)
+    assert r.distance == 0. and round(r.in_force * CV.MS_TO_MPH) == 50
 
   def test_profile_zero_turns_it_off(self):
     p = dataclasses.replace(DEFAULT_PROFILE.speed_limit, limit_ahead_decel_mps2=0.)
