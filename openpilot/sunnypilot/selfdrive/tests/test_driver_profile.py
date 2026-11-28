@@ -123,6 +123,13 @@ class TestParse(OpenpilotTestCase):
     p, problems = dp.parse({"red_light": {"min_speed": 20}, "lasers": {"on": True}})
     assert p == dp.DEFAULT_PROFILE and len(problems) == 2
 
+  def test_limit_ahead_decel_is_off_or_at_least_its_minimum(self):
+    for raw, want in ((0, 0.), (0.0, 0.), (0.05, 0.2), (0.2, 0.2), (1.0, 1.0), (9, 1.5), (-1, 0.)):
+      p, problems = dp.parse({"speed_limit": {"limit_ahead_decel_mps2": raw}})
+      assert p.speed_limit.limit_ahead_decel_mps2 == want and len(problems) == (raw not in (0, 0.2, 1.0)), raw
+    p, problems = dp.parse({"speed_limit": {"limit_ahead_decel_mps2": 0.05}}, strict=True)
+    assert p.speed_limit.limit_ahead_decel_mps2 == 0.5 and "between 0 (off) and 0.2" in problems[0]
+
   def test_unknown_schema_version_is_all_defaults(self):
     p, problems = dp.parse({"schema_version": 2, "soft_stop": {"low_speed_decel_gain": 1.3}})
     assert p == dp.DEFAULT_PROFILE and len(problems) == 1

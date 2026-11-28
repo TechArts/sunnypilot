@@ -35,6 +35,11 @@ def _num(default: float, lo: float, hi: float):
   return field(default=default, metadata={"range": (lo, hi)})
 
 
+def _num_or_off(default: float, lo: float, hi: float):
+  """0 (off) or lo..hi: a value between 0 and lo is raised to lo."""
+  return field(default=default, metadata={"range": (0., hi), "min_on": lo})
+
+
 def _choice(default: str, *choices: str):
   return field(default=default, metadata={"choices": choices})
 
@@ -105,7 +110,8 @@ class SpeedLimit:
   school_zone_max_mph: int = _num(25, 15, 30)
   school_street_min_mph: int = _num(35, 25, 45)
   freeway_min_mph: int = _num(55, 40, 75)
-  limit_ahead_decel_mps2: float = _num(0.5, 0.0, 1.5)  # the vote takes OSM's lower limit ahead so early that this decel gets there; 0 = off
+  # the vote takes OSM's lower limit ahead so early that this decel gets there; 0 = off (0.2 m/s^2 at least: 0.05 would start ~12 km out at 79 mph)
+  limit_ahead_decel_mps2: float = _num_or_off(0.5, 0.2, 1.5)
 
 
 @dataclass(frozen=True)
@@ -265,12 +271,16 @@ def _value(section: str, f: dataclasses.Field, raw: Any, strict: bool, problems:
     return default
   value: float = int(raw) if isinstance(default, int) else float(raw)
   lo, hi = rng
-  if lo <= value <= hi:
+  min_on = f.metadata.get("min_on")
+  in_range = lo <= value <= hi
+  if in_range and not (min_on is not None and 0. < value < min_on):
     return value
   if strict:
-    problems.append(f"{key}: {_show(raw)} is outside {lo}..{hi}")
+    problems.append(f"{key}: {_show(raw)} is outside {lo}..{hi}" if not in_range else f"{key}: {_show(raw)} is between 0 (off) and {min_on}")
     return default
   clamped = type(value)(min(max(value, lo), hi))
+  if min_on is not None and 0. < clamped < min_on:
+    clamped = type(value)(min_on)
   problems.append(f"{key}: {_show(raw)} clamped to {clamped}")
   return clamped
 
