@@ -4,13 +4,17 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 
-The speed-limit vote on the cases seen on the GV70's routes 74-8d (research/speed-limit-modes-2026-11-24.md in the driver's notes).
+The speed-limit vote on the cases seen on the GV70's routes 74-8d (research/speed-limit-modes-2026-11-24.md in the driver's notes), and OSM's
+lower limit ahead on routes 83-a8 (research/speed-limit-ahead-2026-11-27.md).
 """
+import dataclasses
 import datetime
 
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
-from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.vote import MPH, SpeedLimitVote, vote, in_school_hours, LOCAL_TZ, BIG_DROP_HOLD
+from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.vote import (MPH, SpeedLimitVote, vote, in_school_hours, LOCAL_TZ, BIG_DROP_HOLD,
+                                                                         DROP_HOLD, LIMIT_AHEAD_CONFIRM, LIMIT_AHEAD_LAG)
+from openpilot.sunnypilot.selfdrive.driver_profile import DEFAULT_PROFILE
 
 WEEKDAY_SCHOOL = datetime.datetime(2026, 11, 24, 8, 30, tzinfo=LOCAL_TZ)  # Tuesday 08:30
 SUNDAY = datetime.datetime(2026, 11, 22, 8, 40, tzinfo=LOCAL_TZ)
@@ -127,3 +131,116 @@ class TestVotePersistence:
   def test_low_nav_at_freeway_speed_is_a_ramp_not_a_school(self):
     # review: nav snapped to a <= 25 ramp at 62 mph under OSM 65 must not become a school zone
     assert vote(25, 25, 65, False, 62, MPH) == (65, True, False)
+
+
+def drive(v: SpeedLimitVote, seconds: float, car, osm, speed, ahead=None, dist=0., now=WEEKDAY_SCHOOL, closing=True):
+  """Frames at a constant speed (mph): the distance to OSM's limit ahead shrinks with the travel (grows: closing=False), as the resolver passes
+  it (never below 0). Returns the frames' (limit mph, result distance m, distance to the start m) and the distance left."""
+  out = []
+  for _ in range(round(seconds / DT_MDL)):
+    r = v.update(ms(car), ms(car), ms(osm), False, ms(speed), False, now, ms(ahead), max(0., dist))
+    out.append((round(r.limit * CV.MS_TO_MPH), r.distance, dist))
+    dist += ms(speed) * DT_MDL * (-1. if closing else 1.)
+  return out, dist
+
+
+def first_at(frames, limit):
+  return next((f for f in frames if f[0] == limit), None)
+
+
+class TestLimitAhead:
+  """OSM's lower limit ahead (research/speed-limit-ahead-2026-11-27.md): route 91 Pearblossom Hwy 55 -> 50 at 79 mph, the car's nav 112 m late."""
+  START_79 = ms(79) * LIMIT_AHEAD_LAG + (ms(79) ** 2 - ms(50) ** 2) / (2 * DEFAULT_PROFILE.speed_limit.limit_ahead_decel_mps2)  # 819 m
+
+  def approach(self, v, car=55, osm=55, ahead=50, speed=79, dist=1200.):
+    run(v, 1, car, car, osm, speed)
+    return drive(v, (dist + 5.) / ms(speed), car, osm, speed, ahead, dist)
+
+  def test_lower_limit_ahead_is_taken_where_openpilot_needs_to_start(self):
+    frames, _ = self.approach(SpeedLimitVote(DT_MDL))
+    assert all(f[0] == 55 for f in frames if f[2] > self.START_79)
+    first = first_at(frames, 50)
+    assert first is not None and self.START_79 - ms(79) * (DROP_HOLD + 0.1) <= first[2] <= self.START_79
+    assert abs(first[1] - first[2]) < 1.  # not in force yet: the resolver's distance to its start
+    assert all(f[0] == 50 for f in frames if f[2] < first[2])
+    assert frames[-1][1] == 0.  # reached: in force
+
+  def test_kept_while_the_car_lags_then_the_car_takes_over(self):
+    v = SpeedLimitVote(DT_MDL)
+    self.approach(v)
+    frames, _ = drive(v, 100. / ms(79), 55, 50, 79)  # OSM switched, the nav still 55 for 100 m
+    assert all(f[:2] == (50, 0.) for f in frames)
+    assert run(v, 1, 50, 50, 50, 70)[0] == 50 and v.ahead is None
+
+  def test_never_confirmed_by_the_car_goes_back(self):
+    v = SpeedLimitVote(DT_MDL)
+    self.approach(v)
+    frames, _ = drive(v, (LIMIT_AHEAD_CONFIRM + 100.) / ms(79), 55, 50, 79)
+    assert frames[0][0] == 50 and frames[-1][0] == 55  # the vote's own rule then: the car's 55 over OSM's 50
+
+  def test_never_raised_early(self):
+    frames, _ = self.approach(SpeedLimitVote(DT_MDL), car=45, osm=45, ahead=55, speed=60, dist=300.)
+    assert all(f[0] == 45 for f in frames)
+
+  def test_car_source_contradicting_osm(self):
+    # route 91 46.9: nav 50, OSM 55 with 45 ahead: the two maps disagree on the current limit, nothing early
+    frames, _ = self.approach(SpeedLimitVote(DT_MDL), car=50, osm=55, ahead=45, speed=67, dist=1220.)
+    assert all(f[0] == 50 for f in frames)
+    # the car's limit moving elsewhere during the approach lets it go
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 55, 55, 55, 79)
+    drive(v, 3, 55, 55, 79, 50, self.START_79 - 10.)
+    frames, _ = drive(v, 3, 60, 55, 79, 50, self.START_79 - 120.)
+    assert frames[-1][0] == 60 and v.ahead is None
+
+  def test_stale_or_missing_osm_lets_it_go(self):
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 55, 55, 55, 79)
+    drive(v, 3, 55, 55, 79, 50, 500.)
+    assert v.ahead is not None
+    frames, _ = drive(v, 3, 55, None, 79)  # the resolver passes no OSM limit (and no ahead) when the map data is older than its limit
+    assert v.ahead is None and frames[-1][0] == 55
+
+  def test_not_for_a_school_zone_limit_a_big_drop_or_an_unposted_value(self):
+    for car, ahead in ((35, 25), (65, 45), (60, 37)):  # route 93 Oxnard St 35 -> 25, a 20 mph drop, route 91 OSM "37"
+      frames, _ = self.approach(SpeedLimitVote(DT_MDL), car=car, osm=car, ahead=ahead, speed=car + 5, dist=600.)
+      assert all(f[0] == car for f in frames), (car, ahead)
+
+  def test_school_rule_untouched(self):
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 40, 40, 40, 40, now=SUNDAY)
+    drive(v, 2, 40, 40, 40, 35, 60., now=SUNDAY)
+    assert run(v, 5, 25, 25, 40, 38, now=SUNDAY) == (40, False)  # a school zone out of hours still keeps the street's 40
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 40, 40, 40, 40)
+    assert run(v, 1.1, 25, 25, 40, 38) == (25, True)
+
+  def test_cross_street_start_is_let_go(self):
+    # route 92 De Soto Ave: OSM's 30 ahead, the distance growing again well before it is reached
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 40, 40, 40, 40)
+    drive(v, 2, 40, 40, 40, 35, 120.)
+    assert v.ahead is not None
+    drive(v, 2, 40, 40, 40, 35, 84., closing=False)  # 120 m and growing: not on the car's way
+    assert v.ahead is None and v.ahead_dropped == (35, 40)
+
+  def test_passing_the_start_before_osm_switches(self):
+    # route 84 Chino Valley Fwy: OSM's distance bottoms out at 3 m, grows again and OSM's own limit switches 73 m after its start
+    v = SpeedLimitVote(DT_MDL)
+    frames, _ = self.approach(v, car=65, osm=65, ahead=55, speed=60, dist=400.)
+    assert frames[-1][0] == 55
+    frames, _ = drive(v, 70. / ms(60), 65, 65, 60, 55, 3., closing=False)  # past the start, OSM still 65 for 70 m
+    frames2, _ = drive(v, 200. / ms(60), 65, 55, 60, 65, 2300.)  # OSM 55 now, 65 again 2.3 km on; the nav still 65
+    assert all(f[0] == 55 for f in frames + frames2)
+
+  def test_short_lower_stretch_is_let_go(self):
+    v = SpeedLimitVote(DT_MDL)
+    run(v, 1, 40, 40, 40, 30)
+    drive(v, 3, 40, 40, 30, 35, 40.)
+    frames, _ = drive(v, 3, 40, 35, 30, 40, 30.)  # OSM 35, but 40 again in 30 m: the car could never confirm it
+    assert v.ahead is None and frames[-1][0] == 40
+
+  def test_profile_zero_turns_it_off(self):
+    p = dataclasses.replace(DEFAULT_PROFILE.speed_limit, limit_ahead_decel_mps2=0.)
+    frames, _ = self.approach(SpeedLimitVote(DT_MDL, p))
+    assert all(f[0] == 55 for f in frames)

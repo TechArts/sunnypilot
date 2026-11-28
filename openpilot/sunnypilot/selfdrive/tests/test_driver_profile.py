@@ -58,7 +58,7 @@ class TestDefaultsAreTheForkConstants(OpenpilotTestCase):
     assert dataclasses.astuple(p.green_light) == (1.0, 1.0)
     assert dataclasses.astuple(p.cues) == (True, True)
     assert dataclasses.astuple(p.alerts) == (True, True)
-    assert dataclasses.astuple(p.speed_limit) == ("America/Los_Angeles", (0, 1, 2, 3, 4), ("07:00", "17:00"), 25, 35, 55)
+    assert dataclasses.astuple(p.speed_limit) == ("America/Los_Angeles", (0, 1, 2, 3, 4), ("07:00", "17:00"), 25, 35, 55, 0.5)
     assert dataclasses.astuple(p.over_speed) == (2.0, 5.0)
     assert dataclasses.astuple(p.gas_resume) == (True, 0.5, 2.0, -0.5, 2.5, -0.8)
     assert dataclasses.astuple(p.soft_stop) == (1.15, 5.0)

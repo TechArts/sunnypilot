@@ -9,6 +9,7 @@ import time
 
 from openpilot.common.constants import CV
 from openpilot.common.parameterized import parameterized
+from openpilot.common.realtime import DT_MDL
 
 from openpilot.cereal import custom
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE
@@ -203,6 +204,31 @@ class TestSpeedLimitResolverValidation(OpenpilotTestCase):
     sm_mock['carStateSP'].speedLimit = sm_mock['carStateSP'].navSpeedLimit = 65 * CV.MPH_TO_MS
     resolver.update(73 * CV.MPH_TO_MS, sm_mock)
     assert resolver.limit_solutions[SpeedLimitSource.map] == 65 * CV.MPH_TO_MS
+
+  def _vote_ahead(self, mocker, distance, map_age=0.5, seconds=1.2):
+    """Route 91 Pearblossom Hwy: dash, nav and OSM 55, OSM 50 ahead, the car at 79 mph; the vote's frames for `seconds`."""
+    resolver = SpeedLimitResolver()
+    resolver.policy = Policy.vote
+    mocker.patch.object(resolver, 'update_params')  # keep the policy: the periodic refresh reads SpeedLimitPolicy from Params
+    sm_mock = self._ahead_sm(mocker, 55, 50, distance, map_age)
+    sm_mock['carStateSP'].speedLimit = sm_mock['carStateSP'].navSpeedLimit = 55 * CV.MPH_TO_MS
+    sm_mock['carStateSP'].speedLimitSchoolSign = False
+    for _ in range(round(seconds / DT_MDL)):
+      resolver.update(79 * CV.MPH_TO_MS, sm_mock)
+    return resolver
+
+  def test_vote_takes_a_lower_limit_ahead_early_with_its_distance(self, resolver_class, mocker):
+    resolver = self._vote_ahead(mocker, 600.)  # inside the 819 m openpilot needs from 79 mph at 0.5 m/s^2
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 50 and resolver.source == SpeedLimitSource.map
+    assert 600. - 79 * CV.MPH_TO_MS * 0.6 < resolver.distance < 600. - 79 * CV.MPH_TO_MS * 0.4  # the travel since the map message
+    resolver = self._vote_ahead(mocker, 1000.)
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 55 and resolver.distance == 0.
+
+  def test_vote_ignores_a_stale_or_unplaced_limit_ahead(self, resolver_class, mocker):
+    resolver = self._vote_ahead(mocker, 600., map_age=2 * LIMIT_MAX_MAP_DATA_AGE)
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 55 and resolver.limit_solutions[SpeedLimitSource.map] == 0.
+    resolver = self._vote_ahead(mocker, 0.)  # mapd sends 0 m when the limit ahead has no coordinates
+    assert round(resolver.speed_limit * CV.MS_TO_MPH) == 55
 
   def _nav_sm(self, mocker, nav, map_valid=True):
     sm_mock = setup_sm_mock(mocker)
