@@ -11,8 +11,8 @@ speed loses to OSM, a big drop at speed must persist, and a school zone's condit
 
 Lower limit ahead (research/speed-limit-ahead-2026-11-27.md): when the car and OSM agree on the current limit and OSM has a lower one ahead, the
 vote takes the lower one so early that openpilot, slowing at the profile's limit_ahead_decel_mps2, is at it where OSM's own limit changes. The
-car's nav and dash changed 6-228 m after OSM's change point on the port routes, so the lower limit is kept that far past it while the car still
-shows the old one. Never for a school-zone-sized limit, a drop the vote would make wait (big_drop), or a value that is not a posted one.
+car's nav changed up to 228 m after OSM's change point on the port routes, so the lower limit is kept a while past it while the car still shows
+the old one. Never for a school-zone-sized limit, a drop the vote would make wait (big_drop), or a value that is not a posted one.
 """
 import dataclasses
 import datetime
