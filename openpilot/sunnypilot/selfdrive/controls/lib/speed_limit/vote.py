@@ -8,6 +8,11 @@ Speed-limit policy "vote" (Hyundai CCNC, GV70): the car's dash value (the nav ma
 unit's nav limit, and OSM vote, with guards against the wrong-low values seen on 28 routes (research/speed-limit-modes-2026-11-24.md in the
 driver's notes): a camera reading counts only when OSM confirms it (truck "55" and ramp advisories on freeways), the nav snapping to a ramp at
 speed loses to OSM, a big drop at speed must persist, and a school zone's conditional limit applies only in weekday school hours.
+
+Lower limit ahead (research/speed-limit-ahead-2026-11-27.md): when the car and OSM agree on the current limit and OSM has a lower one ahead, the
+vote takes the lower one so early that openpilot, slowing at the profile's limit_ahead_decel_mps2, is at it where OSM's own limit changes. The
+car's nav and dash changed 6-228 m after OSM's change point on the port routes, so the lower limit is kept that far past it while the car still
+shows the old one. Never for a school-zone-sized limit, a drop the vote would make wait (big_drop), or a value that is not a posted one.
 """
 import dataclasses
 import datetime
@@ -45,6 +50,12 @@ RAISE_HOLD = 2.  # s an increase must persist
 DROP_HOLD = 1.  # s a decrease must persist
 BIG_DROP_HOLD = 10.  # s a big decrease at speed must persist unless both maps agree
 
+LIMIT_AHEAD_LAG = 2.  # s at speed before openpilot slows: the vote's DROP_HOLD and the cruise easing into its decel
+LIMIT_STEP = 5  # posted limits are multiples of 5 (mph and km/h); OSM's "37" (a 60 km/h tag read as mph, route 91) is not one
+LIMIT_AHEAD_NEAR = 25.  # m: the start OSM reported is reached; before it the distance may grow back this much (more: a cross street, route 92)
+LIMIT_AHEAD_OSM_LATE = 150.  # m past the reported start OSM's own limit may still be the old one (it switched 15-73 m past it on the port routes)
+LIMIT_AHEAD_CONFIRM = 400.  # m past the reported start the car's own limit may still be the old one (route 84: OSM 73 m late, the nav 228 m later)
+
 
 @dataclass(frozen=True)
 class Units:
@@ -66,6 +77,7 @@ class VoteResult:
   limit: float  # m/s, 0 = none
   from_map: bool
   school: bool
+  distance: float = 0.  # m to the start of the limit when it is a lower one ahead taken early (not in force yet), else 0
 
 
 def _units(v: float, u: Units) -> int | None:
@@ -113,19 +125,65 @@ class SpeedLimitVote:
     self.pending: tuple[int, bool] | None = None  # (limit, school) waiting to persist
     self.pending_time = 0.
     self.school_sign_age = SCHOOL_SIGN_MEMORY + 1.
+    self.ahead_decel = cfg.limit_ahead_decel_mps2
+    self.ahead: tuple[int, int] | None = None  # (OSM's lower limit ahead, the limit before it) being slowed for
+    self.ahead_distance = 0.  # m to its start, 0 once reached
+    self.ahead_closest = 0.  # m, the shortest distance to its start so far
+    self.ahead_past = 0.  # m since its start was reached
+    self.ahead_dropped: tuple[int, int] | None = None  # the (ahead, current) pair last let go: not taken again while OSM reports the same
+
+  def _start_distance(self, v_ego: float, limit: float) -> float:
+    """How far before a lower limit (m/s) openpilot has to start, at v_ego, to be at it there."""
+    return v_ego * LIMIT_AHEAD_LAG + max(0., v_ego ** 2 - limit ** 2) / (2. * self.ahead_decel)
+
+  def _limit_ahead(self, car: int | None, o: int | None, a: int | None, ahead_dist: float, v_ego: float, u: Units) -> int | None:
+    """OSM's lower limit ahead to use now (display units), or None."""
+    if self.ahead is not None:
+      low, before = self.ahead
+      grew = False
+      if o == before and a == low:
+        grew = ahead_dist > self.ahead_closest + LIMIT_AHEAD_NEAR
+        self.ahead_closest = min(self.ahead_closest, ahead_dist)
+      reached = o == low or self.ahead_closest <= LIMIT_AHEAD_NEAR
+      if reached:
+        self.ahead_past += v_ego * self.dt
+      self.ahead_distance = 0. if reached else ahead_dist
+      if car not in (before, low) or o not in (before, low):
+        keep = False  # the car's limit or OSM's went elsewhere (or OSM is stale / missing)
+      elif o == before:
+        # before the start: OSM still has it ahead (not after a turn onto another road) and the car is heading for it (not a cross street);
+        # past it: OSM's own limit has a little while to follow
+        keep = self.ahead_past <= LIMIT_AHEAD_OSM_LATE if reached else (a == low and not grew)
+      else:
+        # OSM's own limit is the lower one: until the car has it too (the plain vote takes it then), unless the car never confirms it or
+        # the lower stretch ends before it could
+        keep = car != low and self.ahead_past <= LIMIT_AHEAD_CONFIRM and not (a is not None and a > low and ahead_dist < LIMIT_AHEAD_CONFIRM)
+      if not keep:
+        self.ahead, self.ahead_dropped = None, self.ahead
+    if self.ahead_dropped != (a, o):
+      self.ahead_dropped = None
+    if (self.ahead is None and self.ahead_dropped is None and self.ahead_decel > 0. and a is not None and o is not None and car == o
+        and u.school_max < a < o and o - a <= u.big_drop and a % LIMIT_STEP == 0 and 0. < ahead_dist <= self._start_distance(v_ego, a * u.to_ms)):
+      self.ahead, self.ahead_distance, self.ahead_closest, self.ahead_past = (a, o), ahead_dist, ahead_dist, 0.
+    return self.ahead[0] if self.ahead is not None else None
 
   def update(self, dash: float, nav: float, osm: float, school_sign: bool, v_ego: float, is_metric: bool,
-             now: datetime.datetime | None = None) -> VoteResult:
+             now: datetime.datetime | None = None, ahead: float = 0., ahead_dist: float = 0.) -> VoteResult:
+    """ahead, ahead_dist: OSM's limit ahead (m/s, 0 = none) and the distance to its start now (m); only with a fresh, valid OSM limit."""
     u = KPH if is_metric else self.mph
     self.school_sign_age = 0. if school_sign else self.school_sign_age + self.dt
     d, n, o, v = _units(dash, u), _units(nav, u), _units(osm, u), int(round(v_ego / u.to_ms))
     cand, from_map, school = vote(d, n, o, self.school_sign_age <= SCHOOL_SIGN_MEMORY, v, u)
+    low = self._limit_ahead(n if n is not None else d, o, _units(ahead, u), ahead_dist, v_ego, u)
 
     if school and not in_school_hours(now or datetime.datetime.now(datetime.UTC), self.school_rule):
       # not in force: the street's own limit (OSM's, else the one before the zone)
       cand, from_map, school = (o, True, False) if o is not None else (self.base, self.base_from_map, False)
       if cand is None and self.applied_school:  # a school zone applied in school hours, nothing to go back to: no limit
         self.applied, self.applied_school = None, False
+
+    if low is not None and not school and cand is not None and cand > low:
+      cand, from_map = low, True
 
     if cand is None or (cand == self.applied and school == self.applied_school):
       self.pending, self.pending_time = None, 0.
@@ -147,4 +205,5 @@ class SpeedLimitVote:
           self.base, self.base_from_map = cand, from_map
         self.pending, self.pending_time = None, 0.
 
-    return VoteResult(self.applied * u.to_ms if self.applied else 0., self.applied_from_map, self.applied_school)
+    distance = self.ahead_distance if self.ahead is not None and self.applied == self.ahead[0] and not self.applied_school else 0.
+    return VoteResult(self.applied * u.to_ms if self.applied else 0., self.applied_from_map, self.applied_school, distance)

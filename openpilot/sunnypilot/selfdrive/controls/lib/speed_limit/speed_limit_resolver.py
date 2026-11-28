@@ -187,23 +187,26 @@ class SpeedLimitResolver:
     return SpeedLimitSource.none
 
   def _resolve_by_vote(self, sm: messaging.SubMaster) -> tuple[float, float, custom.LongitudinalPlanSP.SpeedLimit.Source]:
-    """Policy vote: the car's dash value, its nav value and OSM's current limit (without the nav stand-in or the upstream anticipation),
-    see speed_limit/vote.py."""
+    """Policy vote: the car's dash value, its nav value and OSM's current limit (without the nav stand-in or the upstream anticipation)
+    plus OSM's limit ahead, see speed_limit/vote.py. The distance is the one to a lower limit ahead the vote took early, else 0."""
     self._reset_limit_sources(SpeedLimitSource.map)
     map_data = sm['liveMapDataSP']
+    ahead = ahead_dist = 0.
     if map_data.speedLimitValid and self._map_data_age(sm) <= LIMIT_MAX_MAP_DATA_AGE:
       self.limit_solutions[SpeedLimitSource.map] = map_data.speedLimit
+      if map_data.speedLimitAheadValid and map_data.speedLimitAheadDistance > 0.:
+        ahead, ahead_dist = map_data.speedLimitAhead, self._map_distance_ahead(sm)
     car_sp = sm['carStateSP']
     alive = sm.alive['carStateSP']
     dash = car_sp.speedLimit if alive else 0.
     nav = car_sp.navSpeedLimit if alive else 0.
     self.limit_solutions[SpeedLimitSource.car] = dash
     result = self._vote.update(dash, nav, self.limit_solutions[SpeedLimitSource.map], alive and car_sp.speedLimitSchoolSign,
-                               self.v_ego, self.is_metric)
+                               self.v_ego, self.is_metric, ahead=ahead, ahead_dist=ahead_dist)
     self.school_zone = result.school
     if result.limit <= 0.:
       return 0., 0., SpeedLimitSource.none
-    return result.limit, 0., SpeedLimitSource.map if result.from_map else SpeedLimitSource.car
+    return result.limit, result.distance, SpeedLimitSource.map if result.from_map else SpeedLimitSource.car
 
   def _resolve_limit_sources(self, sm: messaging.SubMaster) -> tuple[float, float, custom.LongitudinalPlanSP.SpeedLimit.Source]:
     """Get limit solutions from each data source"""

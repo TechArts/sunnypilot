@@ -105,6 +105,7 @@ class SpeedLimit:
   school_zone_max_mph: int = _num(25, 15, 30)
   school_street_min_mph: int = _num(35, 25, 45)
   freeway_min_mph: int = _num(55, 40, 75)
+  limit_ahead_decel_mps2: float = _num(0.5, 0.0, 1.5)  # the vote takes OSM's lower limit ahead so early that this decel gets there; 0 = off
 
 
 @dataclass(frozen=True)
